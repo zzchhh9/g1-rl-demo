@@ -166,7 +166,7 @@ def main():
     dodge_start_pos = None
     dodge_start_yaw = 0.0
     return_converged = False
-    safety_distance = 1.5
+    safety_distance = 1.2
     lidar_detected_pos = None
 
     # Obstacle trajectory
