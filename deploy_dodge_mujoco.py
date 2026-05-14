@@ -24,18 +24,18 @@ import numpy as np
 import torch
 import yaml
 
-# Add parent deploy package
-sys.path.insert(0, str(Path(__file__).parent.parent / "deploy"))
+# Add deploy package (inside this repo)
+_REPO_ROOT = Path(__file__).parent
+sys.path.insert(0, str(_REPO_ROOT / "deploy"))
 from dodge_policy import DodgePolicy
 from lidar_sim import LidarSim, LidarConfig
 
 from legged_gym import LEGGED_GYM_ROOT_DIR
 
-# ── Paths ──
+# ── Paths (all relative to repo root, works after fresh clone) ──
 LOCO_CONFIG = f"{LEGGED_GYM_ROOT_DIR}/deploy/deploy_mujoco/configs/g1.yaml"
-DODGE_CKPT = str(Path(__file__).parent.parent / "h1_loco" / "logs" / "rsl_rl" /
-    "h1_dodge_base_vel" / "2026-05-03_07-35-03_v23b_BC_fzyaw_revdep_latdodge50_vy100_drop0.3_ret80_lr5e-05_warmstart" / "model_54400.pt")
-RETURN_HEAD_CKPT = str(Path(__file__).parent.parent / "checkpoints" / "return_head_v23b_v6.pt")
+DODGE_CKPT = str(_REPO_ROOT / "checkpoints" / "dodge_v23b_54400.pt")
+RETURN_HEAD_CKPT = str(_REPO_ROOT / "checkpoints" / "return_head_v23b_v6.pt")
 
 
 def get_gravity_orientation(quat):
