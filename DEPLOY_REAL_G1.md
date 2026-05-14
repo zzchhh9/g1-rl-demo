@@ -29,11 +29,16 @@ git clone https://github.com/zzchhh9/g1-rl-demo.git
 cd g1-rl-demo
 git submodule update --init --recursive
 
-# 安装依赖
-pip install torch numpy mujoco pyyaml imageio imageio-ffmpeg
+# 用 uv 安装依赖
+# 注意：pyproject.toml 里有 isaacgym 依赖（训练用），deploy 不需要。
+# 如果 uv sync 报错找不到 isaacgym，创建空目录绕过：
+mkdir -p third_party/isaacgym/python && \
+  echo -e '[project]\nname="isaacgym"\nversion="0.0.0"' > third_party/isaacgym/python/pyproject.toml
+
+uv sync
 
 # 验证 checkpoint 能加载
-python -c "
+uv run python -c "
 import torch
 d = torch.load('checkpoints/dodge_v23b_54400.pt', map_location='cpu', weights_only=False)
 print(f'Dodge policy: {len(d[\"model_state_dict\"])} keys ✅')
@@ -56,12 +61,11 @@ Locomotion: TorchScript loaded ✅
 ## 第二步：sim2sim 验证（必须通过再接真机）
 
 ```bash
-MUJOCO_GL=egl PYTHONPATH="third_party/unitree_rl_gym:third_party/rsl_rl" \
-  python deploy_dodge_mujoco.py --duration 25
+# 无头模式运行
+MUJOCO_GL=egl uv run python deploy_dodge_mujoco.py --duration 25
 
 # 或者录制视频
-MUJOCO_GL=egl PYTHONPATH="third_party/unitree_rl_gym:third_party/rsl_rl" \
-  python deploy_dodge_mujoco.py --record sim2sim_test.mp4 --duration 25
+MUJOCO_GL=egl uv run python deploy_dodge_mujoco.py --record sim2sim_test.mp4 --duration 25
 ```
 
 **必须看到以下输出才算通过：**
@@ -84,9 +88,10 @@ MUJOCO_GL=egl PYTHONPATH="third_party/unitree_rl_gym:third_party/rsl_rl" \
 **这一步是安全底线 — locomotion 走不稳的话，绝对不能加 dodge。**
 
 ```bash
-cd third_party/unitree_rl_gym/deploy/deploy_real
-python deploy_real.py eth0 configs/g1.yaml
+# 用仓库自带的 deploy_real.py（通过 uv 运行）
+uv run python third_party/unitree_rl_gym/deploy/deploy_real/deploy_real.py eth0 configs/g1.yaml
 # eth0 替换为你的网卡名（用 ip link show 查看）
+# configs/g1.yaml 在 third_party/unitree_rl_gym/deploy/deploy_real/configs/ 下
 ```
 
 **操作流程：**
