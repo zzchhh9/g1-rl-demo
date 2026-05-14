@@ -161,53 +161,18 @@ def detect_obstacle_from_lidar(point_cloud, robot_pos, robot_yaw):
 
 在 `deploy_real.py` 的 `Controller.run()` 中，把遥控器命令替换为 dodge 策略输出：
 
-```python
-# 在 Controller.__init__ 中加载 dodge policy:
-from deploy.dodge_policy import DodgePolicy
-self.dodge = DodgePolicy('checkpoints/dodge_v23b_54400.pt')
-self.dodge_active = False
-self.dodge_start_pos = None
-self.dodge_start_yaw = 0.0
-self.safety_distance = 2.0  # 第一次测试用 2m，留足反应时间
-self.MAX_LIN_VEL = 0.15     # 第一次只给 0.15 m/s !!!
+**已写好的脚本 `deploy_dodge_real.py`（直接用，不用改 deploy_real.py）：**
 
-# 在 Controller.run() 中，替换 self.cmd 的来源：
-obstacle_pos = detect_obstacle_from_lidar(...)  # 你写的 LiDAR 检测
-if obstacle_pos is not None:
-    dist = np.linalg.norm(robot_pos[:2] - obstacle_pos[:2])
-else:
-    dist = float('inf')
+```bash
+# 第一次测试（超保守：0.10 m/s，2.5m 触发距离）
+uv run python deploy_dodge_real.py eth0 configs/g1.yaml
 
-if dist < self.safety_distance and not self.dodge_active:
-    self.dodge_active = True
-    self.dodge_start_pos = robot_pos[:2].copy()
-    self.dodge_start_yaw = robot_yaw
-    self.dodge.reset(robot_pos[:2], robot_yaw)
-
-if self.dodge_active:
-    if dist < self.safety_distance + 0.1:
-        obs18 = self.dodge.build_obs(robot_pos, robot_yaw, obstacle_pos)
-        vel = self.dodge.get_velocity_command(obs18)
-        self.cmd[0] = np.clip(vel[0], -self.MAX_LIN_VEL, self.MAX_LIN_VEL)
-        self.cmd[1] = np.clip(vel[1], -self.MAX_LIN_VEL, self.MAX_LIN_VEL)
-        self.cmd[2] = np.clip(vel[2], -0.3, 0.3)
-    else:
-        # 障碍物远离 → 回位
-        disp_w = robot_pos[:2] - self.dodge_start_pos
-        yaw_err = robot_yaw - self.dodge_start_yaw
-        yaw_err = (yaw_err + np.pi) % (2 * np.pi) - np.pi
-        # 简单 P 控制器回位
-        self.cmd[0] = np.clip(-2.0 * disp_w[0], -self.MAX_LIN_VEL, self.MAX_LIN_VEL)
-        self.cmd[1] = np.clip(-2.0 * disp_w[1], -self.MAX_LIN_VEL, self.MAX_LIN_VEL)
-        self.cmd[2] = np.clip(-2.0 * yaw_err, -0.3, 0.3)
-        if np.linalg.norm(disp_w) < 0.2 and abs(yaw_err) < 0.15:
-            self.dodge_active = False
-else:
-    # 正常遥控器控制
-    self.cmd[0] = self.remote_controller.ly
-    self.cmd[1] = self.remote_controller.lx * -1
-    self.cmd[2] = self.remote_controller.rx * -1
+# 自定义速度和距离
+uv run python deploy_dodge_real.py eth0 configs/g1.yaml --max_vel 0.15 --safety_dist 2.0
 ```
+
+操作流程和 deploy_real.py 一样：START → 站起 → A → 进入 dodge 模式。
+遥控器正常控制走路，障碍物靠近时自动切换到 dodge 策略。
 
 ---
 
@@ -217,10 +182,15 @@ else:
 
 | 轮次 | MAX_LIN_VEL | safety_distance | 障碍物（人）速度 | 预期 |
 |---|---|---|---|---|
-| 1 | **0.15 m/s** | 2.0m | 人慢走 0.1 m/s | 机器人缓慢侧移 |
+| 0 | **0.10 m/s** | **2.5m** | 人站着不动，缓慢靠近 | 确认方向正确，手臂不晃 |
+| 1 | 0.15 m/s | 2.0m | 人慢走 0.1 m/s | 机器人缓慢侧移 |
 | 2 | 0.25 m/s | 1.5m | 人正常走 0.2 m/s | 机器人明显侧移 |
 | 3 | 0.35 m/s | 1.0m | 人正常走 0.3 m/s | 接近训练配置 |
 | 4 | 0.50 m/s | 0.6m | 人快走 0.3 m/s | 全速（训练配置） |
+
+> ⚠️ **手臂安全**：locomotion 只控制 12-DOF 腿部，手臂由 PD 控制器锁定在默认位置
+> （`arm_waist_kps` 最高 300 N·m/rad）。如果发现手臂抖动或晃动，立即停止并降低
+> locomotion 速度。手臂不参与 dodge 动作。
 
 **每轮之间必须确认：**
 - [ ] 机器人没有倒
