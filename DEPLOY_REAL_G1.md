@@ -9,7 +9,18 @@
 
 ---
 
-## 第一步：工作站环境准备
+## Checkpoint 清单
+
+| 文件 | 用途 | 来源 | 大小 |
+|---|---|---|---|
+| `motion.pt` | locomotion (12-DOF LSTM 走路) | g1-rl-demo 仓库自带 | ~2MB |
+| `model_54400.pt` | dodge policy (transformer 躲避) | swirl03 训练产出 | ~5MB |
+| `return_head_v23b_v6.pt` | 回位策略 (小 MLP) | swirl03 训练产出 | ~10KB |
+
+**locomotion 不需要训练** — 用 unitree_rl_gym 预训练的 `motion.pt` 即可。
+dodge 和 return_head 是我们训练的，需要从 swirl03 传到工作站。
+
+## 第一步：工作站环境准备 + Checkpoint 传输
 
 ```bash
 # 1. 克隆你的 fork
@@ -20,9 +31,38 @@ git submodule update --init --recursive
 # 2. 安装依赖 (uv)
 uv sync
 
-# 3. 确认 sim2sim 能跑（先不接真机）
+# 3. 创建 checkpoints 目录，传输 dodge 和 return_head checkpoint
+mkdir -p checkpoints
+
+# 从 swirl03 下载 dodge policy（v23b@54400）
+scp swirl03:/home/zz4723/diffusionsafeguards/h1_loco/logs/rsl_rl/h1_dodge_base_vel/2026-05-03_07-35-03_v23b_BC_fzyaw_revdep_latdodge50_vy100_drop0.3_ret80_lr5e-05_warmstart/model_54400.pt \
+    checkpoints/dodge_v23b_54400.pt
+
+# 从 swirl03 下载 return_head
+scp swirl03:/home/zz4723/diffusionsafeguards/checkpoints/return_head_v23b_v6.pt \
+    checkpoints/return_head_v23b_v6.pt
+
+# 从 swirl03 下载 deploy 模块（dodge_policy.py, lidar_sim.py 等）
+scp -r swirl03:/home/zz4723/diffusionsafeguards/.claude/worktrees/deploy/deploy/ \
+    ./deploy/
+
+# 4. 验证 checkpoint 能加载
+python -c "
+import torch
+d = torch.load('checkpoints/dodge_v23b_54400.pt', map_location='cpu', weights_only=False)
+print(f'Dodge policy: {len(d[\"model_state_dict\"])} keys')
+r = torch.load('checkpoints/return_head_v23b_v6.pt', map_location='cpu', weights_only=False)
+print(f'Return head: {len(r[\"model_state_dict\"])} keys')
+l = torch.jit.load('third_party/unitree_rl_gym/deploy/pre_train/g1/motion.pt')
+print(f'Locomotion: loaded (TorchScript)')
+print('✅ 所有 checkpoint 加载成功')
+"
+
+# 5. 确认 sim2sim 能跑（先不接真机）
 MUJOCO_GL=egl PYTHONPATH="third_party/unitree_rl_gym:third_party/rsl_rl" \
-  python deploy_dodge_mujoco.py --duration 10
+  python deploy_dodge_mujoco.py \
+    --dodge_ckpt checkpoints/dodge_v23b_54400.pt \
+    --duration 10
 
 # 看到 "✓ IDLE → DODGE → RETURN → STOP" 就说明环境没问题
 ```
