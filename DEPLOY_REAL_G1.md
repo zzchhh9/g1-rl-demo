@@ -61,11 +61,12 @@ Locomotion: TorchScript loaded ✅
 ## 第二步：sim2sim 验证（必须通过再接真机）
 
 ```bash
-# 无头模式运行
-MUJOCO_GL=egl uv run python deploy_dodge_mujoco.py --duration 25
+# 无头模式运行（30 秒，障碍物 0.30 m/s）
+MUJOCO_GL=egl uv run python deploy_dodge_mujoco.py --duration 30 --obstacle_speed 0.30
 
-# 或者录制视频
-MUJOCO_GL=egl uv run python deploy_dodge_mujoco.py --record sim2sim_test.mp4 --duration 25
+# 录制视频
+MUJOCO_GL=egl uv run python deploy_dodge_mujoco.py \
+  --record sim2sim_test.mp4 --duration 30 --obstacle_speed 0.30
 ```
 
 **必须看到以下输出才算通过：**
@@ -73,12 +74,15 @@ MUJOCO_GL=egl uv run python deploy_dodge_mujoco.py --record sim2sim_test.mp4 --d
 ✓ IDLE → DODGE (LiDAR) → RETURN → STOP
 ```
 
-**如果看到 `✗`**：检查 checkpoint 是否正确加载、PYTHONPATH 是否设对。
+**如果看到 `✗`**：
+- 检查 checkpoint 是否正确加载（第一步的验证要通过）
+- 尝试加长时间 `--duration 40`
+- 检查 `uv sync` 是否成功
 
 **看视频确认：**
 - [ ] 机器人全程站稳不倒（z ≈ 0.78）
 - [ ] 红球靠近时机器人侧移躲避
-- [ ] 红球远离后机器人回到原位
+- [ ] 红球远离后机器人回到原位（disp < 0.2m）
 - [ ] 全程机器人和红球不接触
 
 ---
