@@ -1,7 +1,7 @@
 """Real G1 dodge deployment: dodge policy + locomotion via unitree_sdk2.
 
 Extends deploy_real.py with:
-  1. LiDAR obstacle detection (Livox Mid-360 via Livox SDK 2 UDP)
+  1. LiDAR obstacle detection (unitree_sdk2py DDS 订阅 PointCloud2)
   2. Dodge policy overrides locomotion velocity command
   3. Return head + yaw P-controller for post-dodge return
   4. Safety limits with configurable max velocity
@@ -14,16 +14,15 @@ Controls:
     A      → enable walking + dodge mode
     SELECT → EMERGENCY STOP (any time)
 
-LiDAR: connects to Livox Mid-360 via UDP multicast (no ROS2 needed).
-       Requires livox_lidar_sdk2.so on the system. If not available,
-       falls back to a dummy detector that always returns no obstacle.
+LiDAR: 通过 unitree_sdk2py DDS 订阅 rt/utlidar/voxel_map (PointCloud2),
+       与 test_lidar.py 使用完全相同的接口。不需要 ROS2。
 """
 
 from __future__ import annotations
 
+import struct
 import sys
 import time
-import threading
 from pathlib import Path
 
 import numpy as np
@@ -51,150 +50,116 @@ from config import Config
 
 
 # ═══════════════════════════════════════════════════════════════
-# LiDAR obstacle detection (Livox Mid-360 via UDP, no ROS2)
+# LiDAR obstacle detection (unitree_sdk2py DDS, 与 test_lidar.py 一致)
 # ═══════════════════════════════════════════════════════════════
 
-class LivoxObstacleDetector:
-    """Detect nearest obstacle from Livox Mid-360 point cloud via UDP.
+# PointField datatype 常量 (与 SDK PointField_Constants 一致)
+_FLOAT32 = 7
+_INT32 = 5
 
-    Uses raw UDP socket to receive Livox point cloud packets on the
-    multicast group. No ROS2, no livox_ros_driver2 needed.
+from unitree_sdk2py.idl.sensor_msgs.msg.dds_ import PointCloud2_
 
-    The Livox Mid-360 broadcasts point cloud on UDP multicast 224.1.1.5:56301.
-    Each packet contains N points in Cartesian format (x,y,z in mm as int32).
 
-    If the Livox SDK shared library is not available, this falls back to
-    a dummy that always returns None (no obstacle detected). This allows
-    testing the rest of the pipeline without hardware.
+class LidarObstacleDetector:
+    """通过 unitree_sdk2py DDS 订阅 G1 板载 LiDAR PointCloud2 数据。
+
+    与 test_lidar.py 使用完全相同的接口：
+      ChannelSubscriber("rt/utlidar/voxel_map", PointCloud2_)
+
+    不需要 ROS2，不需要 Livox SDK，直接用 Unitree SDK 的 DDS 通道。
     """
 
-    def __init__(self, host_ip: str = "192.168.123.222",
-                 lidar_ip: str = "192.168.123.120",
-                 point_port: int = 56301,
-                 min_height: float = 0.3,
-                 max_range: float = 5.0):
+    def __init__(self, topic: str = "rt/utlidar/voxel_map",
+                 min_height: float = 0.3, max_range: float = 5.0):
         self._min_height = min_height
         self._max_range = max_range
         self._latest_points: np.ndarray | None = None
-        self._lock = threading.Lock()
-        self._running = False
+        self._msg_count = 0
 
+        self.subscriber = ChannelSubscriber(topic, PointCloud2_)
+        self.subscriber.Init(self._callback, 10)
+        print(f"[LiDAR] 已订阅 DDS topic: {topic}")
+
+    def _callback(self, msg: PointCloud2_):
+        """解析 PointCloud2 → numpy xyz 点云。"""
+        self._msg_count += 1
+        width = msg.width
+        height = msg.height
+        point_step = msg.point_step
+        data = bytes(msg.data)
+        n_points = width * height
+
+        if n_points == 0 or len(data) == 0:
+            return
+
+        # 找 x, y, z 字段的 offset 和 datatype
+        field_map = {}
+        for f in msg.fields:
+            field_map[f.name] = (f.offset, f.datatype)
+
+        if "x" not in field_map or "y" not in field_map or "z" not in field_map:
+            return
+
+        x_off, x_type = field_map["x"]
+        y_off, y_type = field_map["y"]
+        z_off, z_type = field_map["z"]
+
+        points = []
+        for i in range(n_points):
+            base = i * point_step
+            if base + point_step > len(data):
+                break
+            x = self._read(data, base + x_off, x_type)
+            y = self._read(data, base + y_off, y_type)
+            z = self._read(data, base + z_off, z_type)
+            if x is not None and y is not None and z is not None:
+                points.append([x, y, z])
+
+        if len(points) > 0:
+            self._latest_points = np.array(points, dtype=np.float32)
+
+    @staticmethod
+    def _read(data: bytes, offset: int, dtype: int):
         try:
-            import socket
-            import struct
-            self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM,
-                                       socket.IPPROTO_UDP)
-            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._sock.bind(("", point_port))
-            # Join multicast group
-            mreq = struct.pack("4s4s",
-                               socket.inet_aton("224.1.1.5"),
-                               socket.inet_aton(host_ip))
-            self._sock.setsockopt(socket.IPPROTO_IP,
-                                  socket.IP_ADD_MEMBERSHIP, mreq)
-            self._sock.settimeout(0.1)
-            self._running = True
-            self._thread = threading.Thread(target=self._recv_loop, daemon=True)
-            self._thread.start()
-            print(f"[LiDAR] Listening on UDP {host_ip}:{point_port} "
-                  f"(multicast 224.1.1.5)")
-        except Exception as e:
-            print(f"[LiDAR] WARNING: UDP init failed ({e}). "
-                  f"Using dummy detector (no obstacle detection).")
-            self._sock = None
-
-    def _recv_loop(self):
-        """Background thread: receive UDP packets and parse point cloud."""
-        import struct
-        buf = bytearray(65536)
-        points_accum = []
-        last_flush = time.time()
-
-        while self._running:
-            try:
-                n = self._sock.recv_into(buf)
-                if n < 24:
-                    continue
-                # Livox SDK2 packet header: version(1) + length(2) + ... + data_type(1)
-                # Data starts after header. For Cartesian High (data_type=1):
-                # each point = x(int32) + y(int32) + z(int32) + reflectivity(uint8)
-                # + tag(uint8) = 14 bytes
-                # Simplified parsing: try to extract xyz from fixed offset
-                data_type = buf[18]
-                dot_num = struct.unpack_from("<H", buf, 20)[0]
-                offset = 24  # approximate header size
-
-                if data_type == 1:  # Cartesian High
-                    for _ in range(dot_num):
-                        if offset + 14 > n:
-                            break
-                        x, y, z = struct.unpack_from("<iii", buf, offset)
-                        points_accum.append([x / 1000.0, y / 1000.0, z / 1000.0])
-                        offset += 14
-                elif data_type == 2:  # Cartesian Low
-                    for _ in range(dot_num):
-                        if offset + 8 > n:
-                            break
-                        x, y, z = struct.unpack_from("<hhh", buf, offset)
-                        points_accum.append([x / 100.0, y / 100.0, z / 100.0])
-                        offset += 8
-
-                # Flush accumulated points as a "frame" every 100ms
-                now = time.time()
-                if now - last_flush > 0.1 and len(points_accum) > 100:
-                    with self._lock:
-                        self._latest_points = np.array(points_accum,
-                                                        dtype=np.float32)
-                    points_accum = []
-                    last_flush = now
-
-            except TimeoutError:
-                continue
-            except Exception:
-                continue
+            if dtype == _FLOAT32:
+                return struct.unpack_from("<f", data, offset)[0]
+            elif dtype == _INT32:
+                return float(struct.unpack_from("<i", data, offset)[0])
+            return None
+        except struct.error:
+            return None
 
     def detect(self, robot_pos: np.ndarray,
                robot_yaw: float) -> np.ndarray | None:
-        """Return obstacle position in WORLD frame, or None.
-
-        Args:
-            robot_pos: [x, y, z] robot world position
-            robot_yaw: robot yaw in radians
-        """
-        if self._sock is None:
-            return None
-
-        with self._lock:
-            pts = self._latest_points
+        """检测最近障碍物，返回 world frame 位置 [x,y,z] 或 None。"""
+        pts = self._latest_points
         if pts is None or len(pts) == 0:
             return None
 
-        # Points from Livox are in SENSOR frame (Z-up, X-forward).
-        # Transform to world frame using robot pose.
+        # LiDAR 点在 sensor frame (X-前, Y-左, Z-上)
+        # 转换到 world frame
         cy, sy = np.cos(robot_yaw), np.sin(robot_yaw)
-        # Rotate sensor-frame points to world frame + translate
         wx = pts[:, 0] * cy - pts[:, 1] * sy + robot_pos[0]
         wy = pts[:, 0] * sy + pts[:, 1] * cy + robot_pos[1]
         wz = pts[:, 2] + robot_pos[2]
 
-        # Filter: above floor, within range, not self
+        # 过滤: 地面以上 + 范围内 + 排除自身
         mask = wz > self._min_height
         dists = np.sqrt((wx - robot_pos[0])**2 + (wy - robot_pos[1])**2)
-        mask &= dists < self._max_range
-        mask &= dists > 0.3  # exclude self-reflections
+        mask &= (dists < self._max_range) & (dists > 0.3)
 
         if mask.sum() == 0:
             return None
 
-        # Nearest cluster centroid
         filtered = np.stack([wx[mask], wy[mask], wz[mask]], axis=1)
-        centroid = filtered.mean(axis=0)
-        return centroid.astype(np.float32)
+        return filtered.mean(axis=0).astype(np.float32)
+
+    @property
+    def msg_count(self) -> int:
+        return self._msg_count
 
     def stop(self):
-        self._running = False
-        if self._sock:
-            self._sock.close()
+        pass  # DDS subscriber 自动清理
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -229,8 +194,8 @@ class DodgeController:
             self.return_head.eval()
             print("[ReturnHead] Loaded")
 
-        # ── LiDAR (Livox SDK UDP, no ROS2) ──
-        self.lidar = LivoxObstacleDetector()
+        # ── LiDAR (unitree_sdk2py DDS, 与 test_lidar.py 一致) ──
+        self.lidar = LidarObstacleDetector()
 
         # ── SDK communication ──
         self.low_cmd = unitree_hg_msg_dds__LowCmd_()
@@ -462,12 +427,14 @@ class DodgeController:
         self.send_cmd(self.low_cmd)
         time.sleep(self.config.control_dt)
 
-        # ── Log ──
+        # ── Log (每秒一次) ──
         if self.counter % 50 == 0:
             phase_str = "DODGE" if self.dodge_active else (
                 "DONE" if self.return_converged else "IDLE")
+            lidar_str = f"lidar={dist:.2f}m" if dist < 100 else "lidar=N/A"
+            lidar_frames = self.lidar.msg_count
             print(f"  [{phase_str:5s}] cmd=[{self.cmd[0]:+.2f},{self.cmd[1]:+.2f},"
-                  f"{self.cmd[2]:+.2f}] dist={dist:.2f}")
+                  f"{self.cmd[2]:+.2f}] {lidar_str} lidar_frames={lidar_frames}")
 
 
 if __name__ == "__main__":
