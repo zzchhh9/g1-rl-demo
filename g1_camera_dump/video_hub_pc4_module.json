@@ -1,0 +1,69 @@
+{
+    "Commit": "99fbcc2c6ffe93754701d45074493e216929f18f",
+    "FileList": {
+        "/unitree/etc/master_service/service/video_hub_pc4": 738,
+        "/unitree/module/video_hub_pc4/cyclonedds.xml": 158,
+        "/unitree/module/video_hub_pc4/videohub_pc4": 63592
+    },
+    "Install": {
+        "CmdPostList": [
+            {
+                "Cmd": "/unitree/sbin/mscli startservice video_hub_pc4",
+                "Delay": 0.0,
+                "ExpectCode": [
+                    0
+                ],
+                "IgnoreUnexpected": false
+            }
+        ],
+        "CmdPreList": [
+            {
+                "Cmd": "/unitree/sbin/mscli stopservice video_hub_pc4",
+                "Delay": 0.0,
+                "ExpectCode": [
+                    1,
+                    108,
+                    120
+                ],
+                "IgnoreUnexpected": false
+            }
+        ]
+    },
+    "Method": "",
+    "Name": "video_hub_pc4",
+    "Remove": {
+        "CmdPostList": [
+            {
+                "Cmd": "/unitree/sbin/mscli removeservice video_hub_pc4",
+                "Delay": 0.0,
+                "ExpectCode": [
+                    0
+                ],
+                "IgnoreUnexpected": false
+            },
+            {
+                "Cmd": "/bin/rm -rf /unitree/module/video_hub_pc4",
+                "Delay": 0.0,
+                "ExpectCode": [
+                    0
+                ],
+                "IgnoreUnexpected": true
+            }
+        ],
+        "CmdPreList": [
+            {
+                "Cmd": "/unitree/sbin/mscli stopservice video_hub_pc4",
+                "Delay": 0.0,
+                "ExpectCode": [
+                    1,
+                    108,
+                    120
+                ],
+                "IgnoreUnexpected": false
+            }
+        ]
+    },
+    "Time": "2025-03-28 10:52:48",
+    "Type": "NORMAL",
+    "Version": "1.0.1.1"
+}

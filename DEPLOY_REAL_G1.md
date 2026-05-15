@@ -180,23 +180,58 @@ uv run python nearest_obstacle.py
 ./scripts/stop_lidar.sh
 ```
 
+**日常重连 — 第二次以后用这个流程（非首次部署）：**
+
+第一次部署后，机器人/笔记本之间的状态可能是：
+- 转发器还活着（短时间离开） → 直接跑工具即可
+- 机器人重启了 / 转发器被 kill / 长时间断开 → 需要重新 bringup
+
+判断哪种情况，**一行 UDP 探测**：
+
+```bash
+timeout 2 python3 -c "import socket; s=socket.socket(2,2); s.bind(('',56301)); s.settimeout(1.5); n=0
+try:
+  while True: s.recvfrom(2048); n+=1
+except: pass
+print('packets/1.5s =', n)"
+```
+
+- 输出 `packets/1.5s = 几千` → 数据流还在，直接 `uv run python nearest_obstacle.py`
+- 输出 `packets/1.5s = 0` → 流断了，按下面 4 步恢复：
+
+```bash
+# 1. sshpass 已装则跳过
+sudo apt install -y sshpass
+
+# 2. 网络确认
+ping -c 2 192.168.123.164
+
+# 3. 重新启动数据流
+./scripts/start_lidar.sh
+
+# 4. 跑工具
+uv run python nearest_obstacle.py
+```
+
 **验证清单：**
 - [ ] `test_lidar.py` 基础测试通过（包率 ~2 kHz，点率 ~200k/s）
 - [ ] `nearest_obstacle.py` 输出稳定的距离/方位读数
 - [ ] `--detect` 测试能检测到 1-3m 内的人
 - [ ] 障碍物坐标合理（x=前方为正, y=左侧为正, z>0.3 在地面以上）
 
-**如果完全收不到数据：**
-1. 看转发器是否还活着：
+**如果完全收不到数据**（上面 UDP 探测 = 0 且 `start_lidar.sh` 已重跑过仍无效）：
+
+1. 笔记本到机器人连通性：`ping 192.168.123.164`
+2. 转发器是否在机器人上活着：
    ```bash
    sshpass -p 123 ssh unitree@192.168.123.164 'pgrep -af forward.py'
    ```
-2. 看 LiDAR 是否在发：
+3. LiDAR 本体是否还在线：`ping 192.168.123.120`
+4. driver 启动日志：
    ```bash
-   sshpass -p 123 ssh unitree@192.168.123.164 'timeout 2 python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind((\"\",56301)); s.settimeout(2); n=0; \nwhile True:\n try: s.recvfrom(2048); n+=1\n except: break\nprint(n)"'
+   sshpass -p 123 ssh unitree@192.168.123.164 'tail -30 /tmp/livox-run/driver.log'
    ```
-   应该看到几千个包
-3. 看笔记本到机器人的连通：`ping 192.168.123.164`
+   预期看到 `successfully change work mode`；如果是 `bad_alloc caught` 则机器人侧 DDS 撑爆，重启机器人
 
 **深入排查见**：[docs/lidar_how_it_works.md](docs/lidar_how_it_works.md)、[docs/lidar_nearest_obstacle.md](docs/lidar_nearest_obstacle.md)
 

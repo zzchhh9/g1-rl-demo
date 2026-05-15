@@ -1,0 +1,18 @@
+{
+    "Start":
+    {
+        "Cmd": "export CYCLONEDDS_URI=/unitree/module/video_hub_pc4/cyclonedds.xml;/unitree/sbin/start-stop-daemon --start --background --make-pidfile --pidfile=/unitree/var/run/videohub_pc4.pid --exec /unitree/module/video_hub_pc4/videohub_pc4",
+        "ExpectCode": [0]
+    },
+    "Stop":
+    {
+        "Cmd": "/unitree/sbin/start-stop-daemon --stop --pidfile=/unitree/var/run/videohub_pc4.pid --exec /unitree/module/video_hub_pc4/videohub_pc4",
+        "ExpectCode": [0,1]
+    },
+    "Status":
+    {
+        "Cmd": "/unitree/sbin/start-stop-daemon --status --pidfile=/unitree/var/run/videohub_pc4.pid --exec /unitree/module/video_hub_pc4/videohub_pc4",
+        "AliveCode": [0],
+        "DeadCode": [1,3]
+    }
+}

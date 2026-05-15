@@ -1,0 +1,1 @@
+! ssh unitree@192.168.123.164 'systemctl list-units --no-pager | grep -iE "lidar|slam|livox"; echo "---ps---"; ps aux | grep -iE "lidar|livox|slam" | grep -v grep; echo "---unitree dir---"; ls /unitree/ 2>/dev/null; ls /usr/local/bin/ | grep -iE "lidar|livox|slam"'

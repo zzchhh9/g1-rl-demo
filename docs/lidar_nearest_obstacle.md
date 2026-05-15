@@ -86,7 +86,7 @@ class LivoxLidarReceiver:
 
 ## 2) 过滤："哪些点算障碍物"
 
-`pts` 拿到手是 N×3 的 numpy 数组（meters, sensor frame: x前 / y左 / z上）。所有过滤都是矢量化布尔索引：
+`pts` 拿到手是 N×3 的 numpy 数组（meters, sensor frame: **x = 前方、+y = 右侧、z = 上**；y 轴跟典型 ROS REP 105 相反——具体原因见 [lidar_how_it_works.md §6](lidar_how_it_works.md)）。所有过滤都是矢量化布尔索引：
 
 ```python
 x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
@@ -176,25 +176,142 @@ while True:
 
 ---
 
-## 5) 用法
+## 5) 从零开始的完整流程
+
+### 一次性准备（新机器/新环境只做一次）
 
 ```bash
-# 启动数据流（一次，只要 LiDAR 没断电就持续工作）
+# 装 sshpass（start_lidar.sh 用它免交互 SSH 到机器人）
+sudo apt install -y sshpass
+
+# 仓库已 clone 且 uv sync 完成的话，依赖都齐了
+# 主要用到 numpy（uv 项目自带）和可选的 matplotlib
+```
+
+### 每次启动前的确认（10 秒）
+
+```bash
+# 网线插好，机器人开机后能 ping 通：
+ping -c 2 192.168.123.164    # Jetson PC1（运 driver 和 forwarder 的地方）
+ping -c 2 192.168.123.120    # Mid-360 LiDAR 本体
+
+# 都成功才继续
+```
+
+### 启动数据流
+
+```bash
+cd ~/g1-rl-demo
 ./scripts/start_lidar.sh
+```
 
-# 开始读
+成功输出长这样：
+
+```
+[1/4] preparing /tmp/livox-run on robot ...
+[2/4] uploading MID360 config + forwarder + start scripts ...
+[3/4] running driver briefly to tell LiDAR to start streaming ...
+    ✓ LiDAR streaming started
+[4/4] starting UDP forwarder ...
+10326 python3 /tmp/livox-run/forward.py
+✓ LiDAR pipeline up. Test from laptop:
+    uv run python test_lidar.py
+    uv run python test_lidar.py --duration 30 --detect
+```
+
+**说明**：这条命令在机器人侧只占两样东西，都在 `/tmp/livox-run/`（机器人重启清零）。
+只要机器人不重启，LiDAR 会持续往笔记本推流，不需要重复跑。
+
+### 跑工具
+
+```bash
+# 默认配置（推荐起手）
 uv run python nearest_obstacle.py
-#  输出: t=12.3s  pkts=24580  最近: 1.83m  方位=+15.4°  (x=+1.76, y=+0.48, z=+0.95)  n=312
+```
 
-# 调参
-uv run python nearest_obstacle.py --min-h 0.20 --max-r 5.0 --window 0.2
+默认参数：监听 `:56301`，高度过滤 `0.3–2.0m`，半径过滤 `0.3–8.0m`，
+累积窗口 `0.10s`，刷新 `10 Hz`，颜色：红 < 1m / 黄 < 2m / 绿 > 2m。
 
-# 可视化俯视图 (需要 matplotlib)
+输出长这样：
+
+```
+[ready] 监听点云数据… Ctrl+C 退出
+
+t=  3.2s  pkts= 6088  buf=30000  最近: 0.63m  方位= -76.3°  (x=+0.15, y=-0.62, z=+0.32)  n= 312
+```
+
+按 `Ctrl+C` 退出。
+
+### 常用调参
+
+```bash
+# 只看 5m 内，更短窗口（反应更快但点更稀疏）
+uv run python nearest_obstacle.py --max-r 5.0 --window 0.05
+
+# 更高的最小高度（机器人腿部容易在 0.3m 以下，避免误判）
+uv run python nearest_obstacle.py --min-h 0.4
+
+# 慢一点但更稳定（适合做演示）
+uv run python nearest_obstacle.py --window 0.3 --rate 5
+
+# 实时俯视图（额外开一个 matplotlib 窗口，需要图形界面）
 uv run python nearest_obstacle.py --plot
 
-# 关闭
+# 去掉 ANSI 颜色（写入日志文件时用）
+uv run python nearest_obstacle.py --no-color > log.txt
+```
+
+### 关闭
+
+```bash
 ./scripts/stop_lidar.sh
 ```
+
+### 怎么判断"现在能不能直接跑"
+
+如果你不确定上一次的转发器是否还活着（比如刚回到工位、不知道之前会话什么状态），
+先做一个 2 秒的 UDP 探测：
+
+```bash
+timeout 2 python3 -c "import socket; s=socket.socket(2,2); s.bind(('',56301)); s.settimeout(1.5); n=0
+try:
+  while True: s.recvfrom(2048); n+=1
+except: pass
+print('packets/1.5s =', n)"
+```
+
+- 输出 `packets/1.5s = 几千` → 数据流还在，直接 `uv run python nearest_obstacle.py`
+- 输出 `packets/1.5s = 0` → 流断了，先 `./scripts/start_lidar.sh` 再跑工具
+
+### 机器人或笔记本断电/重启后
+
+转发器进程在重启后没了（机器人 `/tmp/livox-run/` 被清空，笔记本无所谓），
+按下面顺序恢复：
+
+```bash
+# 1. 装 sshpass（只在新设备首次需要，永久有效）
+sudo apt install -y sshpass
+
+# 2. 确认网络（机器人开机就绪后）
+ping -c 2 192.168.123.164
+
+# 3. 启动 LiDAR 流水线
+./scripts/start_lidar.sh
+
+# 4. 跑工具
+uv run python nearest_obstacle.py
+```
+
+### 排查
+
+| 现象 | 检查 |
+|---|---|
+| `start_lidar.sh: command not found` | 没在 `g1-rl-demo` 仓库根目录运行 |
+| `sshpass: not installed` | `sudo apt install -y sshpass` |
+| `start_lidar.sh` 卡在 [3/4] 并报 `driver init failed` | 机器人侧 `bad_alloc`，重启机器人后重试；或 SSH 上去看 `/tmp/livox-run/driver.log` |
+| `nearest_obstacle.py` 一直 "无数据" | 转发器没起：`sshpass -p 123 ssh unitree@192.168.123.164 'pgrep -af forward.py'`；或防火墙拦了 UDP :56301 |
+| 距离读数跳变剧烈 | 累积窗口太小 → `--window 0.2` |
+| 距离总是很小 (< 0.5m) 且方位固定 | LiDAR 看到机器人自身 → 提高 `--min-r` |
 
 ---
 
