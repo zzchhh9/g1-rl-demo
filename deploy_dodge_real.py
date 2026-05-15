@@ -50,89 +50,33 @@ from config import Config
 
 
 # ═══════════════════════════════════════════════════════════════
-# LiDAR obstacle detection (unitree_sdk2py DDS, 与 test_lidar.py 一致)
+# LiDAR obstacle detection (Livox Mid-360 UDP direct, 与 test_lidar.py 一致)
 # ═══════════════════════════════════════════════════════════════
 
-# PointField datatype 常量 (与 SDK PointField_Constants 一致)
-_FLOAT32 = 7
-_INT32 = 5
-
-from unitree_sdk2py.idl.sensor_msgs.msg.dds_ import PointCloud2_
+from test_lidar import LivoxLidarReceiver
 
 
 class LidarObstacleDetector:
-    """通过 unitree_sdk2py DDS 订阅 G1 板载 LiDAR PointCloud2 数据。
+    """直接监听机器人转发过来的 Livox Mid-360 UDP 点云，做障碍物检测。
 
-    与 test_lidar.py 使用完全相同的接口：
-      ChannelSubscriber("rt/utlidar/voxel_map", PointCloud2_)
+    数据链路 (见 test_lidar.py 文档头)：
+      Mid-360 (.120) → robot .164:56301 (UDP) → forwarder → laptop :56301
 
-    不需要 ROS2，不需要 Livox SDK，直接用 Unitree SDK 的 DDS 通道。
+    复用 test_lidar.LivoxLidarReceiver 做接收+解析，本类专注于"把点云转到
+    world frame、过滤地面、返回最近障碍物质心"的检测逻辑。
     """
 
-    def __init__(self, topic: str = "rt/utlidar/voxel_map",
+    def __init__(self, port: int = 56301,
                  min_height: float = 0.3, max_range: float = 5.0):
         self._min_height = min_height
         self._max_range = max_range
-        self._latest_points: np.ndarray | None = None
-        self._msg_count = 0
-
-        self.subscriber = ChannelSubscriber(topic, PointCloud2_)
-        self.subscriber.Init(self._callback, 10)
-        print(f"[LiDAR] 已订阅 DDS topic: {topic}")
-
-    def _callback(self, msg: PointCloud2_):
-        """解析 PointCloud2 → numpy xyz 点云。"""
-        self._msg_count += 1
-        width = msg.width
-        height = msg.height
-        point_step = msg.point_step
-        data = bytes(msg.data)
-        n_points = width * height
-
-        if n_points == 0 or len(data) == 0:
-            return
-
-        # 找 x, y, z 字段的 offset 和 datatype
-        field_map = {}
-        for f in msg.fields:
-            field_map[f.name] = (f.offset, f.datatype)
-
-        if "x" not in field_map or "y" not in field_map or "z" not in field_map:
-            return
-
-        x_off, x_type = field_map["x"]
-        y_off, y_type = field_map["y"]
-        z_off, z_type = field_map["z"]
-
-        points = []
-        for i in range(n_points):
-            base = i * point_step
-            if base + point_step > len(data):
-                break
-            x = self._read(data, base + x_off, x_type)
-            y = self._read(data, base + y_off, y_type)
-            z = self._read(data, base + z_off, z_type)
-            if x is not None and y is not None and z is not None:
-                points.append([x, y, z])
-
-        if len(points) > 0:
-            self._latest_points = np.array(points, dtype=np.float32)
-
-    @staticmethod
-    def _read(data: bytes, offset: int, dtype: int):
-        try:
-            if dtype == _FLOAT32:
-                return struct.unpack_from("<f", data, offset)[0]
-            elif dtype == _INT32:
-                return float(struct.unpack_from("<i", data, offset)[0])
-            return None
-        except struct.error:
-            return None
+        self.receiver = LivoxLidarReceiver(port=port)
+        print(f"[LiDAR] UDP receiver on :{port}, min_h={min_height}, max_r={max_range}")
 
     def detect(self, robot_pos: np.ndarray,
                robot_yaw: float) -> np.ndarray | None:
         """检测最近障碍物，返回 world frame 位置 [x,y,z] 或 None。"""
-        pts = self._latest_points
+        pts = self.receiver.points
         if pts is None or len(pts) == 0:
             return None
 
@@ -156,10 +100,10 @@ class LidarObstacleDetector:
 
     @property
     def msg_count(self) -> int:
-        return self._msg_count
+        return self.receiver.packets
 
     def stop(self):
-        pass  # DDS subscriber 自动清理
+        self.receiver.close()
 
 
 # ═══════════════════════════════════════════════════════════════

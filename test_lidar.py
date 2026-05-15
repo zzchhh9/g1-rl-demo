@@ -1,285 +1,272 @@
-"""测试 G1 头顶 Livox Mid-360 LiDAR 的输入输出。
+"""测试 G1 头顶 Livox Mid-360 LiDAR — 直接 UDP 路径，不经 Unitree DDS。
 
-通过 unitree_sdk2py 的 DDS 订阅 G1 板载 LiDAR topic，
-不需要 ROS2，不需要 Livox SDK，直接用 Unitree SDK 自带的接口。
+数据流：
+    Mid-360 (.120) → robot .164:56301 (UDP) → Python forwarder → laptop .222:56301
+    本脚本在笔记本上监听 :56301，按 Livox SDK 2 以太网协议解析点云。
 
-G1 板载 LiDAR 可用 topic:
-    rt/utlidar/voxel_map            - 体素点云 (PointCloud2)
-    rt/utlidar/voxel_map_compressed - 压缩版
-    rt/utlidar/height_map           - 高度图 (PointCloud2)
-    rt/utlidar/range_map            - 距离图 (PointCloud2)
+前置条件 (一次性 bringup)：
+    1. 在机器人上把 LiDAR 配置启动一次（让它开始往 .164 推流）
+    2. 在机器人上启动 UDP 转发器（把 .164:56301 → .222:56301）
+    见 README / scripts/start_lidar.sh
 
 Usage:
-    # 连接 G1 测试 LiDAR
-    uv run python test_lidar.py eth0
-
-    # 指定 topic
-    uv run python test_lidar.py eth0 --topic rt/utlidar/voxel_map
-
-    # 测试障碍物检测（让人站在机器人前方 2m）
-    uv run python test_lidar.py eth0 --detect
+    uv run python test_lidar.py                  # 默认 :56301，10s
+    uv run python test_lidar.py --duration 30
+    uv run python test_lidar.py --detect         # 障碍物检测，请站在前方 1-3m
 
 参考:
-    - unitree_sdk2py: https://github.com/unitreerobotics/unitree_sdk2_python
-    - Sentdex g1_vibes: https://github.com/Sentdex/unitree_g1_vibes
+    Livox-SDK2 协议: https://github.com/Livox-SDK/livox_wiki_en/blob/master/source/tutorials/new_product/mid360/livox_eth_protocol_mid360.md
 """
 
 from __future__ import annotations
 
 import argparse
+import collections
+import socket
 import struct
 import sys
+import threading
 import time
 
 import numpy as np
 
-from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
-from unitree_sdk2py.idl.sensor_msgs.msg.dds_ import PointCloud2_
+
+# ───── Livox Mid-360 Ethernet packet layout ─────
+# Header (36 bytes):
+#   ver(1) length(2) time_interval(2) dot_num(2) udp_cnt(2) frame_cnt(1)
+#   data_type(1) time_type(1) rsvd[12] crc32(4) timestamp[8]
+# Then `dot_num` points; layout depends on data_type:
+#   1 = CartesianHighRaw  (x,y,z int32 mm + refl + tag) = 14 B/pt
+#   2 = CartesianLowRaw   (x,y,z int16 cm + refl + tag) =  8 B/pt
+#   3 = SphericalRaw
+
+_HEADER_FMT = "<BHHHHBBB"   # ver,length,time_interval,dot_num,udp_cnt,frame_cnt,data_type,time_type
+_HEADER_SIZE = 36
+_DT_HIGH = 1
+_DT_LOW = 2
 
 
-# PointField datatype 常量 (sensor_msgs/PointField, 与 SDK PointField_Constants 一致)
-INT8 = 1
-UINT8 = 2
-INT16 = 3
-UINT16 = 4
-INT32 = 5
-UINT32 = 6
-FLOAT32 = 7
-FLOAT64 = 8
+class LivoxLidarReceiver:
+    """监听 UDP 接收 Livox Mid-360 数据，持续累计最近的点云。
 
+    使用一个滚动 deque 保存最近 N 个点；`.points` 返回当前快照。
+    """
 
-class LidarTest:
-    """订阅 G1 LiDAR DDS topic，解析 PointCloud2 数据。"""
+    def __init__(self, port: int = 56301, buffer_pts: int = 50000):
+        self._port = port
+        self._buf: collections.deque[tuple[float, float, float]] = collections.deque(maxlen=buffer_pts)
+        self._lock = threading.Lock()
+        self._packets = 0
+        self._points_recv = 0
+        self._last_dot_num = 0
+        self._last_data_type = 0
+        self._stop = threading.Event()
 
-    def __init__(self, topic: str = "rt/utlidar/voxel_map"):
-        self.topic = topic
-        self._msg_count = 0
-        self._latest_points: np.ndarray | None = None
-        self._latest_time = 0.0
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)
+        self._sock.bind(("", port))
+        self._sock.settimeout(0.5)
 
-        self.subscriber = ChannelSubscriber(topic, PointCloud2_)
-        self.subscriber.Init(self._callback, 10)
-        print(f"[LiDAR] 已订阅 topic: {topic}")
-        print(f"[LiDAR] 等待数据...")
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+        print(f"[LiDAR] 已绑定 UDP :{port}，等待数据 ...")
 
-    def _callback(self, msg: PointCloud2_):
-        """解析 PointCloud2 消息，提取 xyz 坐标。"""
-        self._msg_count += 1
-        self._latest_time = time.time()
-
-        width = msg.width
-        height = msg.height
-        point_step = msg.point_step
-        data = bytes(msg.data)
-        fields = msg.fields
-        n_points = width * height
-
-        if n_points == 0 or len(data) == 0:
-            return
-
-        # 找到 x, y, z 字段的 offset 和 datatype
-        field_map = {}
-        for f in fields:
-            field_map[f.name] = (f.offset, f.datatype)
-
-        if "x" not in field_map or "y" not in field_map or "z" not in field_map:
-            if self._msg_count <= 3:
-                print(f"[LiDAR] WARNING: 缺少 x/y/z 字段。"
-                      f"可用字段: {list(field_map.keys())}")
-            return
-
-        x_off, x_type = field_map["x"]
-        y_off, y_type = field_map["y"]
-        z_off, z_type = field_map["z"]
-
-        # 解析点云
-        points = []
-        for i in range(n_points):
-            base = i * point_step
-            if base + point_step > len(data):
-                break
-            x = self._read_field(data, base + x_off, x_type)
-            y = self._read_field(data, base + y_off, y_type)
-            z = self._read_field(data, base + z_off, z_type)
-            if x is not None and y is not None and z is not None:
-                points.append([x, y, z])
-
-        if len(points) > 0:
-            self._latest_points = np.array(points, dtype=np.float32)
-
-    @staticmethod
-    def _read_field(data: bytes, offset: int, datatype: int) -> float | None:
-        """从 PointCloud2 data 中读取一个字段值。"""
-        try:
-            if datatype == FLOAT32:
-                return struct.unpack_from("<f", data, offset)[0]
-            elif datatype == FLOAT64:
-                return struct.unpack_from("<d", data, offset)[0]
-            elif datatype == INT32:
-                return float(struct.unpack_from("<i", data, offset)[0])
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                data, _ = self._sock.recvfrom(65535)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            if len(data) < _HEADER_SIZE:
+                continue
+            ver, length, _time_interval, dot_num, _udp_cnt, _frame_cnt, data_type, _time_type = \
+                struct.unpack_from(_HEADER_FMT, data, 0)
+            if ver != 0:
+                continue
+            self._packets += 1
+            self._last_dot_num = dot_num
+            self._last_data_type = data_type
+            payload = data[_HEADER_SIZE:]
+            if data_type == _DT_HIGH:
+                stride = 14
+                scale = 0.001
+                fmt = "<iii"
+            elif data_type == _DT_LOW:
+                stride = 8
+                scale = 0.01
+                fmt = "<hhh"
             else:
-                return None
-        except struct.error:
-            return None
+                # IMU or unsupported — skip
+                continue
+            n_in_pkt = min(dot_num, len(payload) // stride)
+            new_pts = []
+            for i in range(n_in_pkt):
+                x, y, z = struct.unpack_from(fmt, payload, i * stride)
+                new_pts.append((x * scale, y * scale, z * scale))
+            if new_pts:
+                with self._lock:
+                    self._buf.extend(new_pts)
+                    self._points_recv += len(new_pts)
+
+    def close(self) -> None:
+        self._stop.set()
+        try:
+            self._sock.close()
+        except Exception:
+            pass
 
     @property
-    def points(self) -> np.ndarray | None:
-        return self._latest_points
+    def packets(self) -> int:
+        return self._packets
 
     @property
     def msg_count(self) -> int:
-        return self._msg_count
+        """Compat alias — original API used `msg_count` (PointCloud2 message count).
+        For UDP-direct, return packet count instead."""
+        return self._packets
+
+    @property
+    def total_points(self) -> int:
+        return self._points_recv
+
+    @property
+    def points(self) -> np.ndarray | None:
+        with self._lock:
+            if not self._buf:
+                return None
+            return np.array(self._buf, dtype=np.float32)
+
+    @property
+    def last_dot_num(self) -> int:
+        return self._last_dot_num
+
+    @property
+    def last_data_type(self) -> int:
+        return self._last_data_type
 
 
-def test_basic(lidar: LidarTest, duration: float = 10.0):
-    """基础测试：检查 LiDAR 是否有数据输出。"""
-    print(f"\n{'='*60}")
+# Backwards-compat name (some other scripts import LidarTest)
+LidarTest = LivoxLidarReceiver
+
+
+# ───── Tests ─────
+
+def test_basic(lidar: LivoxLidarReceiver, duration: float = 10.0) -> bool:
+    print(f"\n{'=' * 60}")
     print(f"测试 1: 基础连接测试 ({duration}s)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     start = time.time()
     while time.time() - start < duration:
         time.sleep(1.0)
         pts = lidar.points
-        n_msgs = lidar.msg_count
-
-        if pts is not None:
+        if pts is not None and len(pts) > 0:
             n = len(pts)
-            x_range = f"[{pts[:,0].min():.2f}, {pts[:,0].max():.2f}]"
-            y_range = f"[{pts[:,1].min():.2f}, {pts[:,1].max():.2f}]"
-            z_range = f"[{pts[:,2].min():.2f}, {pts[:,2].max():.2f}]"
-            print(f"  收到 {n_msgs:4d} 帧 | 最新: {n:5d} 点 | "
+            x_range = f"[{pts[:, 0].min():.2f}, {pts[:, 0].max():.2f}]"
+            y_range = f"[{pts[:, 1].min():.2f}, {pts[:, 1].max():.2f}]"
+            z_range = f"[{pts[:, 2].min():.2f}, {pts[:, 2].max():.2f}]"
+            print(f"  收到 {lidar.packets:6d} 包  | 缓冲 {n:5d} 点  | "
                   f"X{x_range} Y{y_range} Z{z_range}")
         else:
-            print(f"  收到 {n_msgs:4d} 帧 | 无点云数据")
+            print(f"  收到 {lidar.packets:6d} 包  | 无点云数据")
 
-    if lidar.msg_count == 0:
-        print("\n❌ 失败: 没有收到任何 LiDAR 数据")
+    if lidar.packets == 0:
+        print("\n❌ 失败: 没有收到任何 UDP 数据")
         print("   检查:")
-        print("   1. G1 是否开机且 LiDAR 已启动")
-        print("   2. 网络连接是否正常 (ping 192.168.123.161)")
-        print("   3. DDS 域是否匹配")
+        print("   1. 机器人侧 forward.py 是否在跑 (ssh unitree@192.168.123.164)")
+        print("   2. LiDAR 是否启动过 (跑过 driver 一次让它进入推流状态)")
+        print("   3. 防火墙是否拦截 UDP :56301")
         return False
 
     if lidar.points is None or len(lidar.points) == 0:
-        print("\n⚠️  收到消息但无点云，可能 topic 格式不对")
-        print(f"   尝试其他 topic: rt/utlidar/height_map")
+        print("\n⚠️  收到 UDP 包但解析不出点云 — 检查 data_type")
+        print(f"   last data_type={lidar.last_data_type} dot_num={lidar.last_dot_num}")
         return False
 
-    print(f"\n✅ 通过: 收到 {lidar.msg_count} 帧，最新帧 {len(lidar.points)} 点")
+    print(f"\n✅ 通过: 收到 {lidar.packets} 包，累计 {lidar.total_points} 点")
     return True
 
 
-def test_frequency(lidar: LidarTest, duration: float = 5.0):
-    """频率测试：检查 LiDAR 更新频率。"""
-    print(f"\n{'='*60}")
+def test_frequency(lidar: LivoxLidarReceiver, duration: float = 5.0) -> float:
+    print(f"\n{'=' * 60}")
     print(f"测试 2: 频率测试 ({duration}s)")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
-    count_start = lidar.msg_count
+    p0 = lidar.packets
+    pt0 = lidar.total_points
     time.sleep(duration)
-    count_end = lidar.msg_count
-
-    freq = (count_end - count_start) / duration
-    print(f"  帧数: {count_end - count_start} / {duration}s = {freq:.1f} Hz")
-
-    if freq < 5:
-        print(f"  ⚠️  频率偏低 (预期 ~10 Hz)")
-    elif freq > 15:
-        print(f"  ⚠️  频率偏高 (预期 ~10 Hz)")
-    else:
-        print(f"  ✅ 频率正常")
-
-    return freq
+    pkt_hz = (lidar.packets - p0) / duration
+    pt_hz = (lidar.total_points - pt0) / duration
+    print(f"  包速率: {pkt_hz:.1f} pkt/s   (Mid-360 典型 ~2000)")
+    print(f"  点速率: {pt_hz:.0f} pt/s     (典型 ~200k)")
+    return pkt_hz
 
 
-def test_obstacle_detection(lidar: LidarTest, duration: float = 15.0):
-    """障碍物检测测试：让人站在机器人前方，检测是否能识别。"""
-    print(f"\n{'='*60}")
+def test_obstacle_detection(lidar: LivoxLidarReceiver, duration: float = 15.0) -> bool:
+    print(f"\n{'=' * 60}")
     print(f"测试 3: 障碍物检测 ({duration}s)")
     print(f"  请让一个人站在机器人前方 1-3m 处")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
-    min_height = 0.3   # 过滤地面
-    max_range = 5.0    # 最远检测距离
+    min_height = 0.3
+    max_range = 5.0
 
     for i in range(int(duration)):
         time.sleep(1.0)
         pts = lidar.points
         if pts is None or len(pts) == 0:
-            print(f"  {i+1:2d}s: 无数据")
+            print(f"  {i + 1:2d}s: 无数据")
             continue
-
-        # 过滤地面点 (z > min_height)
         above_floor = pts[pts[:, 2] > min_height]
-
-        # 过滤远距离点
         dists = np.linalg.norm(above_floor[:, :2], axis=1)
-        nearby = above_floor[(dists > 0.3) & (dists < max_range)]
-
+        mask = (dists > 0.3) & (dists < max_range)
+        nearby = above_floor[mask]
         if len(nearby) == 0:
-            print(f"  {i+1:2d}s: {len(pts):5d} 点 (地面上方: {len(above_floor)}, "
-                  f"近距离: 0) — 未检测到障碍物")
+            print(f"  {i + 1:2d}s: buf={len(pts):5d} above_floor={len(above_floor)}  近距离: 0")
             continue
-
-        # 最近障碍物的质心
         centroid = nearby.mean(axis=0)
-        nearest_dist = dists[(dists > 0.3) & (dists < max_range)].min()
+        nearest = dists[mask].min()
+        print(f"  {i + 1:2d}s: buf={len(pts):5d}  obstacle pos=[{centroid[0]:+.2f},{centroid[1]:+.2f},{centroid[2]:.2f}]  "
+              f"最近={nearest:.2f}m  n={len(nearby)}")
 
-        print(f"  {i+1:2d}s: {len(pts):5d} 点 | 障碍物: "
-              f"pos=[{centroid[0]:+.2f}, {centroid[1]:+.2f}, {centroid[2]:.2f}] "
-              f"最近={nearest_dist:.2f}m 点数={len(nearby)}")
-
-    if lidar.points is not None:
-        pts = lidar.points
+    pts = lidar.points
+    if pts is not None:
         above = pts[pts[:, 2] > min_height]
         dists = np.linalg.norm(above[:, :2], axis=1)
         nearby = above[(dists > 0.3) & (dists < max_range)]
         if len(nearby) > 10:
             print(f"\n✅ 障碍物检测成功: {len(nearby)} 个点在 0.3-{max_range}m 范围内")
             return True
-
     print(f"\n⚠️  未能稳定检测到障碍物")
-    print(f"   确认: 人是否站在 1-3m 范围内？LiDAR 是否被遮挡？")
     return False
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="G1 LiDAR 测试工具")
-    parser.add_argument("net", type=str, help="网卡名 (如 eth0)")
-    parser.add_argument("--topic", type=str, default="rt/utlidar/voxel_map",
-                        help="LiDAR DDS topic (默认: rt/utlidar/voxel_map)")
+    parser = argparse.ArgumentParser(description="G1 Livox Mid-360 LiDAR 测试 (UDP 直连)")
+    parser.add_argument("--port", type=int, default=56301,
+                        help="本地监听 UDP 端口 (默认 56301)")
     parser.add_argument("--detect", action="store_true",
                         help="运行障碍物检测测试")
     parser.add_argument("--duration", type=float, default=10.0,
                         help="每项测试时长 (秒)")
     args = parser.parse_args()
 
-    # 初始化 DDS 通信
-    ChannelFactoryInitialize(0, args.net)
-    print(f"[DDS] 已初始化，网卡: {args.net}")
+    lidar = LivoxLidarReceiver(port=args.port)
+    time.sleep(0.5)
 
-    lidar = LidarTest(topic=args.topic)
-
-    # 等待一下让订阅建立
-    time.sleep(1.0)
-
-    # 测试 1: 基础连接
     ok = test_basic(lidar, args.duration)
     if not ok:
-        print("\n基础测试失败，跳过后续测试。")
-        print("如果 topic 不对，尝试:")
-        print("  uv run python test_lidar.py eth0 --topic rt/utlidar/height_map")
-        print("  uv run python test_lidar.py eth0 --topic rt/utlidar/range_map")
         sys.exit(1)
 
-    # 测试 2: 频率
     test_frequency(lidar, min(args.duration, 5.0))
 
-    # 测试 3: 障碍物检测 (可选)
     if args.detect:
         test_obstacle_detection(lidar, args.duration)
 
-    print(f"\n{'='*60}")
-    print(f"测试完成。共收到 {lidar.msg_count} 帧。")
-    print(f"{'='*60}")
+    print(f"\n{'=' * 60}")
+    print(f"测试完成。共收到 {lidar.packets} 包 / {lidar.total_points} 点。")
+    print(f"{'=' * 60}")
+    lidar.close()

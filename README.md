@@ -86,3 +86,29 @@ Launch the simulation using the pre-trained policy.
 ```bash
 uv run third_party/unitree_rl_gym/legged_gym/scripts/play.py --task=g1
 ```
+
+## LiDAR (Livox Mid-360) — Real Robot
+
+We bypass Unitree's (incomplete) perception stack and pull the Mid-360 point
+cloud directly from the robot via UDP. See:
+
+- [`docs/lidar_how_it_works.md`](docs/lidar_how_it_works.md) — how the Mid-360
+  works, the wire protocol, and the data path on the G1.
+- [`docs/lidar_nearest_obstacle.md`](docs/lidar_nearest_obstacle.md) — using the
+  point cloud to measure the nearest obstacle in real time.
+
+Quick start (after the robot is on the same Ethernet at `192.168.123.x`):
+
+```bash
+sudo apt install -y sshpass             # one-time
+./scripts/start_lidar.sh                # once per robot boot
+
+uv run python test_lidar.py             # verify ~2k pkt/s, ~200k pts/s
+uv run python nearest_obstacle.py       # real-time distance readout
+./scripts/stop_lidar.sh                 # when done
+```
+
+## Real-Robot Dodge Deployment
+
+See [`DEPLOY_REAL_G1.md`](DEPLOY_REAL_G1.md) for the full deployment guide
+(locomotion + dodge policy + LiDAR + safety procedure).

@@ -15,7 +15,14 @@ g1-rl-demo/
 │   └── safety.py                     ← 安全模块
 ├── deploy_dodge_mujoco.py            ← sim2sim 验证脚本
 ├── deploy_dodge_real.py              ← 真机 dodge 部署脚本 ⭐
-├── test_lidar.py                     ← LiDAR 测试工具 (unitree SDK DDS) ⭐
+├── test_lidar.py                     ← LiDAR 测试工具 (Livox Mid-360 UDP 直连) ⭐
+├── nearest_obstacle.py               ← 独立的实时最近障碍物距离工具 ⭐
+├── scripts/
+│   ├── start_lidar.sh                ← 机器人侧 LiDAR bringup（重启后必跑）
+│   └── stop_lidar.sh                 ← 停止 LiDAR 数据流
+├── docs/
+│   ├── lidar_how_it_works.md         ← Mid-360 原理 + 协议详解
+│   └── lidar_nearest_obstacle.md     ← 实时距离测量实现细节
 ├── third_party/unitree_rl_gym/
 │   ├── deploy/pre_train/g1/motion.pt ← locomotion (12-DOF LSTM，仓库自带)
 │   └── deploy/deploy_real/           ← 真机遥控行走脚本
@@ -120,41 +127,78 @@ uv run python third_party/unitree_rl_gym/deploy/deploy_real/deploy_real.py eth0 
 
 ## 第四步：LiDAR 验证
 
-通过 unitree_sdk2py DDS 直接订阅 G1 板载 LiDAR topic，**不需要 ROS2**。
+**重要**：G1 上 **没有** `rt/utlidar/voxel_map` 这种 DDS topic（那是 Go2 的协议）。我们走的是 **Livox Mid-360 UDP 直连**，不经任何 Unitree 服务。详情见 [docs/lidar_how_it_works.md](docs/lidar_how_it_works.md)。
 
-**可用 topic（G1 板载 Livox Mid-360）：**
+**数据链路：**
 
-| Topic | 内容 | 消息类型 |
-|---|---|---|
-| `rt/utlidar/voxel_map` | 体素点云 | PointCloud2 |
-| `rt/utlidar/height_map` | 高度图 | PointCloud2 |
-| `rt/utlidar/range_map` | 距离图 | PointCloud2 |
+```
+Mid-360 (.120) ─UDP─► Robot Jetson (.164) ─UDP forward─► Laptop (.222)
+```
 
-**用 `test_lidar.py` 逐步验证（已写好，直接用）：**
+机器人侧只跑两样东西，都在 `/tmp/livox-run/`（重启清零）：
+1. 一次性 driver 启动（告诉 LiDAR "把点云发到 .164"）
+2. 一个 30 行的 Python UDP 转发器（持续把 .164:56301/56401/56201 → .222 同端口）
+
+**一次性 bringup（机器人重启后必须重做）：**
 
 ```bash
-# 测试 1: 基础连接 — 检查是否收到数据
-uv run python test_lidar.py eth0
-# 预期: "✅ 通过: 收到 XX 帧，最新帧 XXXX 点"
+# 需要先装 sshpass
+sudo apt install -y sshpass
 
-# 如果 voxel_map 没数据，换 topic:
-uv run python test_lidar.py eth0 --topic rt/utlidar/height_map
+# 启动整套 LiDAR 流水线
+./scripts/start_lidar.sh
+# 输出:
+#   [1/4] preparing /tmp/livox-run on robot ...
+#   [2/4] uploading MID360 config + forwarder + start scripts ...
+#   [3/4] running driver briefly to tell LiDAR to start streaming ...
+#       ✓ LiDAR streaming started
+#   [4/4] starting UDP forwarder ...
+#   ✓ LiDAR pipeline up.
+```
 
-# 测试 2: 障碍物检测 — 让人站在机器人前方 2m
-uv run python test_lidar.py eth0 --detect
-# 预期: "✅ 障碍物检测成功: XX 个点在 0.3-5.0m 范围内"
+**笔记本端测试：**
+
+```bash
+# 测试 1: 基础连接 — 检查是否收到 UDP 包并能解析
+uv run python test_lidar.py
+# 预期:
+#   ✅ 通过: 收到 ~13000 包，累计 ~1.2M 点
+#   包速率: ~2090 pkt/s   (Mid-360 典型 ~2000)
+#   点速率: ~200000 pt/s  (典型 ~200k)
+
+# 测试 2: 障碍物检测 — 让人站在机器人前方 1-3m
+uv run python test_lidar.py --detect
+
+# 测试 3: 实时最近障碍物距离（独立工具，不依赖 deploy_dodge_real.py）
+uv run python nearest_obstacle.py
+# 输出:
+#   t=12.3s  pkts=24580  最近: 1.83m  方位=+15.4°  (x=+1.76, y=+0.48, z=+0.95)  n=312
+```
+
+**关闭：**
+```bash
+./scripts/stop_lidar.sh
 ```
 
 **验证清单：**
-- [ ] `test_lidar.py` 基础测试通过（收到数据）
-- [ ] 频率 ~10 Hz
-- [ ] `--detect` 测试能检测到 2m 外的人
-- [ ] 障碍物位置坐标合理（X=前方, Y=左右, Z>0.3）
+- [ ] `test_lidar.py` 基础测试通过（包率 ~2 kHz，点率 ~200k/s）
+- [ ] `nearest_obstacle.py` 输出稳定的距离/方位读数
+- [ ] `--detect` 测试能检测到 1-3m 内的人
+- [ ] 障碍物坐标合理（x=前方为正, y=左侧为正, z>0.3 在地面以上）
 
-**如果全部失败（没有任何数据）：**
-- 检查 G1 LiDAR 是否开启：`uv run python -c "from unitree_sdk2py.core.channel import *; ChannelFactoryInitialize(0,'eth0'); print('DDS OK')"`
-- 检查网络：`ping 192.168.123.161`
-- 确认 LiDAR 没有被关闭（Go2 有 `rt/utlidar/switch` topic 可以开关）
+**如果完全收不到数据：**
+1. 看转发器是否还活着：
+   ```bash
+   sshpass -p 123 ssh unitree@192.168.123.164 'pgrep -af forward.py'
+   ```
+2. 看 LiDAR 是否在发：
+   ```bash
+   sshpass -p 123 ssh unitree@192.168.123.164 'timeout 2 python3 -c "import socket; s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM); s.bind((\"\",56301)); s.settimeout(2); n=0; \nwhile True:\n try: s.recvfrom(2048); n+=1\n except: break\nprint(n)"'
+   ```
+   应该看到几千个包
+3. 看笔记本到机器人的连通：`ping 192.168.123.164`
+
+**深入排查见**：[docs/lidar_how_it_works.md](docs/lidar_how_it_works.md)、[docs/lidar_nearest_obstacle.md](docs/lidar_nearest_obstacle.md)
 
 ---
 
@@ -207,9 +251,8 @@ uv run python deploy_dodge_real.py eth0 configs/g1.yaml --max_vel 0.15 --safety_
 - [ ] 工作区域清空（无杂物、无其他人）
 - [ ] 电量 > 50%
 - [ ] 先跑 30 秒纯站立确认稳定
-- [ ] LiDAR 数据正常
+- [ ] LiDAR 数据正常（`./scripts/start_lidar.sh` 已跑、`test_lidar.py` 通过）
 - [ ] MAX_LIN_VEL 从 0.10 开始
-- [ ] `test_lidar.py` 基础测试通过
 
 **立即按 SELECT 的情况：**
 - 机器人明显倾斜 > 15°
@@ -226,8 +269,9 @@ uv run python deploy_dodge_real.py eth0 configs/g1.yaml --max_vel 0.15 --safety_
 | 机器人不动 | `cmd` 没传到 locomotion obs | 打印 `self.cmd`，确认非零 |
 | 机器人动了方向反 | body frame 坐标系搞反 | X=前 Y=左，检查 IMU quat 格式 `[w,x,y,z]` |
 | 机器人摔倒 | MAX_LIN_VEL 太大 | 降到 0.1 m/s；确认第三步通过 |
-| LiDAR 没有数据 | DDS 连接失败 | `uv run python test_lidar.py eth0` 排查 |
-| LiDAR 检测不到人 | topic 不对 / 反射率低 | 换 `--topic rt/utlidar/height_map`；穿亮色衣服 |
+| LiDAR 没有数据 | 转发器没起 / driver 没握手 | `./scripts/start_lidar.sh` 重做 bringup |
+| LiDAR 检测不到人 | 反射率低 / 站位太远 | 站在 1-3m 内，穿亮色衣服；调 `nearest_obstacle.py --min-h 0.2` |
+| LiDAR 数据延迟大 | 累积窗口太大 | `nearest_obstacle.py --window 0.05`（更快但更稀疏） |
 | 回位不准 | 里程计漂移 | 短时间(< 20s)内漂移应 < 10cm |
 | yaw 回不来 | P 增益太小 | 把 yaw P 增益从 2.0 调到 3.0 |
 
