@@ -7,17 +7,19 @@ clone 之后所有文件已经在仓库里，不需要单独下载：
 ```
 g1-rl-demo/
 ├── checkpoints/
-│   ├── dodge_v23b_54400.pt        ← dodge 策略 (1.4MB, transformer 18→3)
-│   └── return_head_v23b_v6.pt     ← 回位策略 (390KB, MLP 2→3)
+│   ├── dodge_v23b_54400.pt           ← dodge 策略 (1.4MB, transformer 18→3)
+│   └── return_head_v23b_v6.pt        ← 回位策略 (390KB, MLP 2→3)
 ├── deploy/
-│   ├── dodge_policy.py            ← 推理代码 (只依赖 torch + numpy)
-│   ├── lidar_sim.py               ← LiDAR 仿真 (sim2sim 用，真机不用)
-│   └── safety.py                  ← 安全模块
-├── deploy_dodge_mujoco.py         ← sim2sim 验证脚本
+│   ├── dodge_policy.py               ← 推理代码 (只依赖 torch + numpy)
+│   ├── lidar_sim.py                  ← LiDAR 仿真 (sim2sim 用)
+│   └── safety.py                     ← 安全模块
+├── deploy_dodge_mujoco.py            ← sim2sim 验证脚本
+├── deploy_dodge_real.py              ← 真机 dodge 部署脚本 ⭐
+├── test_lidar.py                     ← LiDAR 测试工具 (unitree SDK DDS) ⭐
 ├── third_party/unitree_rl_gym/
-│   ├── deploy/pre_train/g1/motion.pt    ← locomotion (12-DOF LSTM，仓库自带)
-│   └── deploy/deploy_real/deploy_real.py ← 真机遥控行走脚本
-└── policy_lstm_1.pt               ← 备用 locomotion checkpoint
+│   ├── deploy/pre_train/g1/motion.pt ← locomotion (12-DOF LSTM，仓库自带)
+│   └── deploy/deploy_real/           ← 真机遥控行走脚本
+└── policy_lstm_1.pt                  ← 备用 locomotion checkpoint
 ```
 
 ---
@@ -118,42 +120,41 @@ uv run python third_party/unitree_rl_gym/deploy/deploy_real/deploy_real.py eth0 
 
 ## 第四步：LiDAR 验证
 
-> ⚠️ **注意：真机 LiDAR 集成代码需要你自己写。**
-> 仓库里的 `deploy/lidar_sim.py` 是 MuJoCo 仿真用的，不能直接用于真机。
-> 真机需要：Livox SDK → 点云 → 障碍物检测 → body frame 坐标。
+通过 unitree_sdk2py DDS 直接订阅 G1 板载 LiDAR topic，**不需要 ROS2**。
 
-**Livox Mid-360 驱动启动：**
+**可用 topic（G1 板载 Livox Mid-360）：**
+
+| Topic | 内容 | 消息类型 |
+|---|---|---|
+| `rt/utlidar/voxel_map` | 体素点云 | PointCloud2 |
+| `rt/utlidar/height_map` | 高度图 | PointCloud2 |
+| `rt/utlidar/range_map` | 距离图 | PointCloud2 |
+
+**用 `test_lidar.py` 逐步验证（已写好，直接用）：**
 
 ```bash
-# 方案 A: ROS2（推荐）
-ros2 launch livox_ros_driver2 msg_MID360_launch.py
-ros2 topic echo /livox/lidar --once  # 确认有 PointCloud2 数据
+# 测试 1: 基础连接 — 检查是否收到数据
+uv run python test_lidar.py eth0
+# 预期: "✅ 通过: 收到 XX 帧，最新帧 XXXX 点"
 
-# 方案 B: Livox SDK 直连
-# 参考 https://github.com/Livox-SDK/Livox-SDK2
+# 如果 voxel_map 没数据，换 topic:
+uv run python test_lidar.py eth0 --topic rt/utlidar/height_map
+
+# 测试 2: 障碍物检测 — 让人站在机器人前方 2m
+uv run python test_lidar.py eth0 --detect
+# 预期: "✅ 障碍物检测成功: XX 个点在 0.3-5.0m 范围内"
 ```
 
 **验证清单：**
-- [ ] LiDAR 有数据输出（topic 有消息）
-- [ ] 让人站在 2m 外，能在点云中看到
-- [ ] 更新频率 ~10 Hz
+- [ ] `test_lidar.py` 基础测试通过（收到数据）
+- [ ] 频率 ~10 Hz
+- [ ] `--detect` 测试能检测到 2m 外的人
+- [ ] 障碍物位置坐标合理（X=前方, Y=左右, Z>0.3）
 
-**你需要写的代码（约 50 行）：**
-
-```python
-# 伪代码 — 真机 LiDAR 障碍物检测
-def detect_obstacle_from_lidar(point_cloud, robot_pos, robot_yaw):
-    # 1. 过滤地面点 (z < 0.3m)
-    points = point_cloud[point_cloud[:, 2] > 0.3]
-    # 2. 过滤远距离点 (> 5m)
-    dists = np.linalg.norm(points[:, :2] - robot_pos[:2], axis=1)
-    points = points[dists < 5.0]
-    # 3. 取最近点的质心作为障碍物位置
-    if len(points) == 0:
-        return None
-    centroid = points.mean(axis=0)
-    return centroid  # [x, y, z] world frame
-```
+**如果全部失败（没有任何数据）：**
+- 检查 G1 LiDAR 是否开启：`uv run python -c "from unitree_sdk2py.core.channel import *; ChannelFactoryInitialize(0,'eth0'); print('DDS OK')"`
+- 检查网络：`ping 192.168.123.161`
+- 确认 LiDAR 没有被关闭（Go2 有 `rt/utlidar/switch` topic 可以开关）
 
 ---
 
@@ -207,7 +208,8 @@ uv run python deploy_dodge_real.py eth0 configs/g1.yaml --max_vel 0.15 --safety_
 - [ ] 电量 > 50%
 - [ ] 先跑 30 秒纯站立确认稳定
 - [ ] LiDAR 数据正常
-- [ ] MAX_LIN_VEL 从 0.15 开始
+- [ ] MAX_LIN_VEL 从 0.10 开始
+- [ ] `test_lidar.py` 基础测试通过
 
 **立即按 SELECT 的情况：**
 - 机器人明显倾斜 > 15°
@@ -224,7 +226,8 @@ uv run python deploy_dodge_real.py eth0 configs/g1.yaml --max_vel 0.15 --safety_
 | 机器人不动 | `cmd` 没传到 locomotion obs | 打印 `self.cmd`，确认非零 |
 | 机器人动了方向反 | body frame 坐标系搞反 | X=前 Y=左，检查 IMU quat 格式 `[w,x,y,z]` |
 | 机器人摔倒 | MAX_LIN_VEL 太大 | 降到 0.1 m/s；确认第三步通过 |
-| LiDAR 检测不到人 | 驱动没启动 / 反射率低 | 检查 topic；让人穿亮色衣服 |
+| LiDAR 没有数据 | DDS 连接失败 | `uv run python test_lidar.py eth0` 排查 |
+| LiDAR 检测不到人 | topic 不对 / 反射率低 | 换 `--topic rt/utlidar/height_map`；穿亮色衣服 |
 | 回位不准 | 里程计漂移 | 短时间(< 20s)内漂移应 < 10cm |
 | yaw 回不来 | P 增益太小 | 把 yaw P 增益从 2.0 调到 3.0 |
 
