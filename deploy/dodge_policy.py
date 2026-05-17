@@ -195,6 +195,7 @@ class DodgePolicy:
         robot_yaw: float,
         obstacle_pos_w: np.ndarray,
         dt: float | None = None,
+        obstacle_vel_w: np.ndarray | None = None,
         static_box_aabb: tuple[float, float, float, float] | None = None,
         depart_mask: bool = False,
     ) -> np.ndarray:
@@ -205,6 +206,8 @@ class DodgePolicy:
             robot_yaw: scalar yaw in radians.
             obstacle_pos_w: [x, y, z] obstacle position, world frame.
             dt: timestep (default CONTROL_DT).
+            obstacle_vel_w: optional [vx, vy] obstacle velocity in world frame.
+                            If None, finite-diff obstacle_pos_w.
             static_box_aabb: (x_min, x_max, y_min, y_max) of static obstacle.
                              None → zeros for box obs.
             depart_mask: if True, zero obstacle XY obs (DEPART phase).
@@ -227,7 +230,9 @@ class DodgePolicy:
         obs_pos_b = np.array([obs_pos_b_xy[0], obs_pos_b_xy[1], -0.48], dtype=np.float32)
 
         # Obstacle velocity in body frame (finite-diff)
-        if self._prev_obs_pos_w is not None:
+        if obstacle_vel_w is not None:
+            obs_vel_w = np.asarray(obstacle_vel_w, dtype=np.float32).reshape(-1)[:2]
+        elif self._prev_obs_pos_w is not None:
             obs_vel_w = (obstacle_pos_w[:2] - self._prev_obs_pos_w[:2]) / dt
         else:
             obs_vel_w = np.zeros(2, dtype=np.float32)
@@ -274,16 +279,25 @@ class DodgePolicy:
         return obs.astype(np.float32)
 
     @torch.no_grad()
-    def get_action(self, obs: np.ndarray) -> np.ndarray:
-        """Run inference. Returns [vx_b, vy_b, vrz] in [-1, 1]."""
+    def get_action_with_debug(self, obs: np.ndarray):
+        """Run inference and return action plus raw/normalized internals."""
         obs_t = torch.from_numpy(obs).float().unsqueeze(0).to(self.device)
         if self._norm_mean is not None:
-            obs_t = (obs_t - self._norm_mean) / (self._norm_std + 1e-8)
-        raw = self._model(obs_t).cpu().numpy()[0]
+            obs_model_t = (obs_t - self._norm_mean) / (self._norm_std + 1e-8)
+        else:
+            obs_model_t = obs_t
+        raw = self._model(obs_model_t).cpu().numpy()[0]
         # Transformer action_head has no built-in tanh — apply here to break
         # corner-lock saturation (matches eval_safe_recovery.py:701).
         action = np.clip(np.tanh(raw), -1.0, 1.0)
         self._last_action = action.copy()
+        obs_model = obs_model_t.cpu().numpy()[0]
+        return action, raw, obs_model
+
+    @torch.no_grad()
+    def get_action(self, obs: np.ndarray) -> np.ndarray:
+        """Run inference. Returns [vx_b, vy_b, vrz] in [-1, 1]."""
+        action, _, _ = self.get_action_with_debug(obs)
         return action
 
     def get_velocity_command(self, obs: np.ndarray) -> np.ndarray:
@@ -294,3 +308,13 @@ class DodgePolicy:
             action[1] * self.MAX_LIN_VEL,
             action[2] * self.MAX_ANG_VEL,
         ], dtype=np.float32)
+
+    def get_velocity_command_with_debug(self, obs: np.ndarray):
+        """Return scaled velocity plus normalized action, raw logits, and model obs."""
+        action, raw, obs_model = self.get_action_with_debug(obs)
+        vel = np.array([
+            action[0] * self.MAX_LIN_VEL,
+            action[1] * self.MAX_LIN_VEL,
+            action[2] * self.MAX_ANG_VEL,
+        ], dtype=np.float32)
+        return vel, action, raw, obs_model

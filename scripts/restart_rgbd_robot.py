@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Restart the robot-side RealSense RGBD TCP publisher.
+
+Uploads scripts/rgbd_publisher_robot.py to the G1 Jetson /tmp and starts it as
+`python3 /tmp/rgbd_publisher.py`, listening on TCP :5005.
+
+Run from the laptop:
+    uv run --with paramiko python scripts/restart_rgbd_robot.py
+"""
+
+from __future__ import annotations
+
+import argparse
+import pathlib
+import sys
+
+import paramiko
+
+
+def run(ssh: paramiko.SSHClient, cmd: str, timeout: float = 10.0):
+    stdin, stdout, stderr = ssh.exec_command(cmd, timeout=timeout)
+    out = stdout.read().decode(errors="replace")
+    err = stderr.read().decode(errors="replace")
+    if out:
+        print(out.rstrip())
+    if err:
+        print(err.rstrip(), file=sys.stderr)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--host", default="192.168.123.164")
+    parser.add_argument("--user", default="unitree")
+    parser.add_argument("--password", default="123")
+    parser.add_argument("--local-script",
+                        default=str(pathlib.Path(__file__).with_name(
+                            "rgbd_publisher_robot.py")))
+    parser.add_argument("--remote-script", default="/tmp/rgbd_publisher.py")
+    parser.add_argument("--remote-launch", default="/tmp/launch_rgbd.sh")
+    args = parser.parse_args()
+
+    local_script = pathlib.Path(args.local_script).resolve()
+    if not local_script.exists():
+        raise SystemExit(f"missing local script: {local_script}")
+
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    print(f"[rgbd] connecting {args.user}@{args.host} ...")
+    ssh.connect(args.host, username=args.user, password=args.password,
+                timeout=8, banner_timeout=8, auth_timeout=8)
+    print("[rgbd] connected")
+
+    run(ssh, "set +e; echo '[before]'; "
+             "ps -eo pid,comm,args | "
+             "egrep 'rgbd_publisher|launch_rgbd|video_hub_pc4|"
+             "master_service__video_hub_pc4' | grep -v egrep || true")
+    run(ssh, "set +e; "
+             "pkill -f '/tmp/rgbd_publisher.py' || true; "
+             "pkill -f 'rgbd_publisher_robot.py' || true; "
+             "pkill -f '/tmp/launch_rgbd.sh' || true; "
+             "sleep 1")
+
+    print(f"[rgbd] upload {local_script} -> {args.remote_script}")
+    sftp = ssh.open_sftp()
+    sftp.put(str(local_script), args.remote_script)
+    sftp.chmod(args.remote_script, 0o755)
+    launch = f"""#!/bin/bash
+set -e
+export LD_LIBRARY_PATH=/opt/ros/noetic/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH
+export PYTHONUNBUFFERED=1
+nohup python3 {args.remote_script} > /tmp/rgbd_publisher.log 2>&1 &
+echo $! > /tmp/rgbd_publisher.pid
+sleep 3
+cat /tmp/rgbd_publisher.pid
+"""
+    with sftp.open(args.remote_launch, "w") as f:
+        f.write(launch)
+    sftp.chmod(args.remote_launch, 0o755)
+    sftp.close()
+
+    print("[rgbd] launching ...")
+    run(ssh, f"bash {args.remote_launch}", timeout=10)
+    run(ssh, "tail -n 80 /tmp/rgbd_publisher.log || true; "
+             "echo '[port]'; "
+             "(ss -ltnp 2>/dev/null || netstat -ltnp 2>/dev/null) "
+             "| grep 5005 || true; "
+             "echo '[ps]'; "
+             "ps -eo pid,comm,args | grep /tmp/rgbd_publisher.py "
+             "| grep -v grep || true")
+    ssh.close()
+
+
+if __name__ == "__main__":
+    main()

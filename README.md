@@ -112,3 +112,9 @@ uv run python nearest_obstacle.py       # real-time distance readout
 
 See [`DEPLOY_REAL_G1.md`](DEPLOY_REAL_G1.md) for the full deployment guide
 (locomotion + dodge policy + LiDAR + safety procedure).
+
+The current recommended real-G1 dodge path uses Unitree's built-in blue
+high-level locomotion mode through `LocoClient.SetVelocity`, not the low-level
+`motion.pt` controller. See
+[`docs/g1_sdk_loco_dodge_runbook.md`](docs/g1_sdk_loco_dodge_runbook.md) for
+the exact camera, YOLO, SDK dodge, return, and emergency-stop workflow.

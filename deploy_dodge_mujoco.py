@@ -91,6 +91,58 @@ def main():
     parser.add_argument("--dodge_ckpt", default=DODGE_CKPT)
     parser.add_argument("--obstacle_speed", type=float, default=0.18)
     parser.add_argument("--duration", type=float, default=25.0)
+    parser.add_argument("--replay_yolo", type=str, default="",
+                        help="Path to YOLO trajectory .npy "
+                             "(rows: t, x_fwd, y_left, z, dist, bearing, id). "
+                             "When set, replaces synthetic obstacle + LidarSim "
+                             "with replayed person position (body→world transform "
+                             "applied per frame).")
+    parser.add_argument("--live_yolo", action="store_true",
+                        help="Subscribe to LIVE DDS topic rt/yolo/person "
+                             "(published by scripts/yolo_to_dds_laptop.py). "
+                             "Lets the real RealSense + YOLO drive the sim G1 — "
+                             "you stand in front of the real robot, sim G1 reacts. "
+                             "Real robot is NEVER commanded; only sim moves.")
+    parser.add_argument("--live_yolo_net", type=str, default="eno1",
+                        help="Network interface for live YOLO DDS (default eno1)")
+    parser.add_argument("--live_yolo_staleness", type=float, default=0.5,
+                        help="If no YOLO msg in this many seconds, treat as no obstacle")
+    parser.add_argument("--safety_distance", type=float, default=1.2)
+    parser.add_argument("--replay_max_gap", type=float, default=1.0,
+                        help="In replay: skip detection (lidar=None) when adjacent "
+                             "samples are farther apart than this (sec). Prevents "
+                             "linear-interp-through-tracking-loss artifacts. "
+                             "Default 1.0s.")
+    parser.add_argument("--replay_lpf_alpha", type=float, default=0.3,
+                        help="EMA low-pass filter on (x_fwd, y_left) during replay. "
+                             "0.0 = no filter, 1.0 = no smoothing. Default 0.3 = "
+                             "smooth out per-frame jumps from YOLO ID swaps.")
+    parser.add_argument("--replay_kalman", action="store_true",
+                        help="Use constant-velocity Kalman filter for state estimation "
+                             "(supersedes --replay_lpf_alpha). Predicts at sim 50Hz "
+                             "between sparse YOLO samples, rejects outliers via "
+                             "Mahalanobis gate. RECOMMENDED for noisy YOLO+depth data.")
+    parser.add_argument("--kf_process_pos_std", type=float, default=0.02,
+                        help="KF process noise on position (m per dt)")
+    parser.add_argument("--kf_process_vel_std", type=float, default=0.4,
+                        help="KF process noise on velocity (m/s per dt). "
+                             "Higher = more responsive to person accel")
+    parser.add_argument("--kf_meas_std", type=float, default=0.10,
+                        help="KF measurement noise on YOLO position (m, baseline). "
+                             "Higher = trust YOLO less, more smoothing")
+    parser.add_argument("--kf_meas_std_close", type=float, default=0.30,
+                        help="KF measurement noise inflated to this value when "
+                             "person is at min range. Linear interpolation between "
+                             "min_dist and 2m. Default 0.30m to counter close-range "
+                             "depth noise bursts.")
+    parser.add_argument("--kf_gate", type=float, default=4.0,
+                        help="Mahalanobis distance gate to reject outliers (sigma). "
+                             "Smaller = reject more aggressively. Default 4.0.")
+    parser.add_argument("--reset_distance_offset", type=float, default=0.2,
+                        help="After RETURN converges, reset converged=False when "
+                             "dist > safety_distance + offset. Default 0.2 (= "
+                             "safety+0.2, allows quick re-trigger). Old behavior "
+                             "was 1.0 (= must back off well past dodge zone).")
     args = parser.parse_args()
 
     # ── Load locomotion config ──
@@ -166,7 +218,7 @@ def main():
     dodge_start_pos = None
     dodge_start_yaw = 0.0
     return_converged = False
-    safety_distance = 1.2
+    safety_distance = args.safety_distance
     lidar_detected_pos = None
 
     # Obstacle trajectory
@@ -174,6 +226,57 @@ def main():
     cross_dir = np.array([1.0, 0.0])
     obs_gt_pos = np.array([start_pos[0] - 2.0, start_pos[1] + 0.8, 0.75])
     obstacle_phase = "CROSSING"
+
+    # ── Optional: YOLO trajectory replay (overrides synthetic obstacle + LidarSim) ──
+    replay_traj = None
+    replay_t0_sim = None      # sim time when replay clock starts
+    replay_lpf = {"xy": None}    # EMA state for x_fwd, y_left smoothing
+    # KF state: [x, y, vx, vy], P 4x4, last_sample_idx (last consumed obs)
+    replay_kf = {"x": None, "P": None, "last_sim_t": None, "last_sample_idx": -1,
+                 "n_rejected": 0, "n_accepted": 0}
+    if args.replay_yolo:
+        replay_traj = np.load(args.replay_yolo)
+        print(f"[Replay] {args.replay_yolo}: {len(replay_traj)} samples "
+              f"over {replay_traj[0,0]:.2f}→{replay_traj[-1,0]:.2f}s "
+              f"(dist {replay_traj[:,4].min():.2f}→{replay_traj[:,4].max():.2f}m)")
+        # diagnostics
+        dts = np.diff(replay_traj[:, 0]) * 1000
+        max_dt = dts.max() if len(dts) else 0
+        print(f"          sample dt: median={np.median(dts):.0f}ms max={max_dt:.0f}ms "
+              f"(gap_thresh={args.replay_max_gap*1000:.0f}ms) lpf_alpha={args.replay_lpf_alpha}")
+        replay_t0_sim = 0.0   # was 2.0; 0 → sim plays npy data on the same wall-clock as cam recording
+
+    # ── Optional: LIVE YOLO over DDS (real RealSense + YOLO drives sim G1) ──
+    live_yolo_state = None
+    if args.live_yolo:
+        if replay_traj is not None:
+            raise SystemExit("--live_yolo and --replay_yolo are mutually exclusive")
+        import json, threading
+        from unitree_sdk2py.core.channel import (
+            ChannelFactoryInitialize as _CFI, ChannelSubscriber as _CS,
+        )
+        from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_ as _String
+        _CFI(0, args.live_yolo_net)
+        live_yolo_state = dict(latest=None, recv_t=0.0, lock=threading.Lock(),
+                               count=0, staleness=args.live_yolo_staleness)
+        def _yolo_cb(msg, _s=live_yolo_state):
+            try: d = json.loads(msg.data)
+            except Exception: return
+            with _s["lock"]:
+                _s["latest"] = d
+                _s["recv_t"] = time.time()
+                _s["count"] += 1
+            # Debug: log every msg with detection (rate-limited 5 Hz)
+            if d.get("n", 0) >= 1:
+                now = time.time()
+                if not hasattr(_yolo_cb, "_last_log") or (now - _yolo_cb._last_log) > 0.2:
+                    print(f"  [yolo-rx #{_s['count']}] d={d['dist']:.2f}m bear={d['bearing']:+5.1f}° id{d['track_id']}", flush=True)
+                    _yolo_cb._last_log = now
+        _sub = _CS("rt/yolo/person", _String)
+        _sub.Init(_yolo_cb, 10)
+        live_yolo_state["_sub"] = _sub
+        print(f"[LiveYOLO] subscribed rt/yolo/person on {args.live_yolo_net}, "
+              f"staleness={args.live_yolo_staleness}s")
 
     # Recording
     recording = bool(args.record)
@@ -188,7 +291,7 @@ def main():
         cam.elevation = -25
         cam.azimuth = 135
 
-    FPS = 30
+    FPS = 25  # matches cam recording's OUT_FPS for 1:1 wall-clock alignment in stitch
     render_every = max(1, round(1.0 / (FPS * control_dt)))
     lidar_every = max(1, round(1.0 / (10.0 * control_dt)))  # 10 Hz
     max_steps = int(args.duration / control_dt)
@@ -212,26 +315,177 @@ def main():
         w, x, y, z = quat
         robot_yaw = float(np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
 
-        # Move obstacle
-        if obstacle_phase == "CROSSING":
-            obs_gt_pos[:2] += cross_dir * args.obstacle_speed * control_dt
-            if np.linalg.norm(obs_gt_pos[:2] - start_pos) > 5.0:
-                obstacle_phase = "GONE"
-        # Update mocap position
+        sim_t = ctrl_step * control_dt
+
+        if live_yolo_state is not None:
+            # LIVE: poll latest YOLO msg, drop if stale, convert body→world
+            import time as _t
+            with live_yolo_state["lock"]:
+                _ymsg = live_yolo_state["latest"]
+                recv_t = live_yolo_state["recv_t"]
+            fresh = (_ymsg is not None) and ((_t.time() - recv_t) <= live_yolo_state["staleness"])
+            has_det = fresh and _ymsg.get("n", 0) >= 1
+            if has_det:
+                x_b, y_b = float(_ymsg["x_fwd"]), float(_ymsg["y_left"])
+                z_b = float(_ymsg.get("z", 0.85))
+                cy_, sy_ = np.cos(robot_yaw), np.sin(robot_yaw)
+                wx = robot_pos[0] + x_b * cy_ - y_b * sy_
+                wy = robot_pos[1] + x_b * sy_ + y_b * cy_
+                lidar_detected_pos = np.array([wx, wy, z_b], dtype=np.float64)
+                obs_gt_pos[:] = wx, wy, z_b
+            else:
+                lidar_detected_pos = None
+                obs_gt_pos[:] = robot_pos[0] + 4.0, robot_pos[1], 0.85
+        elif replay_traj is not None and args.replay_kalman:
+            # ── KF replay: constant-velocity model, predict at 50Hz, update on new samples ──
+            # State = [x, y, vx, vy]. Each sim tick we predict; if a new YOLO sample
+            # is available we update (with Mahalanobis gate to reject outliers).
+            replay_t = sim_t - replay_t0_sim
+            ts = replay_traj[:, 0]
+            xs_obs = replay_traj[:, 1]
+            ys_obs = replay_traj[:, 2]
+            z_const = float(replay_traj[0, 3])
+
+            if replay_t < ts[0] or replay_t > ts[-1] + args.replay_max_gap:
+                lidar_detected_pos = None
+                obs_gt_pos[:] = 4.0, 0.0, 0.85
+                replay_kf["x"] = None
+            else:
+                # 1) PREDICT (CV model)
+                if replay_kf["x"] is None:
+                    replay_kf["last_sim_t"] = sim_t
+                else:
+                    dt = sim_t - replay_kf["last_sim_t"]
+                    replay_kf["last_sim_t"] = sim_t
+                    F = np.array([[1, 0, dt, 0], [0, 1, 0, dt],
+                                  [0, 0, 1, 0],  [0, 0, 0, 1]])
+                    Q_pos = (args.kf_process_pos_std) ** 2
+                    Q_vel = (args.kf_process_vel_std * max(dt, 1e-3)) ** 2
+                    Q = np.diag([Q_pos, Q_pos, Q_vel, Q_vel])
+                    replay_kf["x"] = F @ replay_kf["x"]
+                    replay_kf["P"] = F @ replay_kf["P"] @ F.T + Q
+
+                # 2) UPDATE if a new YOLO sample crossed
+                # Find current sample idx (most recent sample with ts[idx] <= replay_t)
+                idx = int(np.searchsorted(ts, replay_t, side="right")) - 1
+                if idx > replay_kf["last_sample_idx"] and idx >= 0:
+                    # Gap check against previous valid sample
+                    prev_idx = replay_kf["last_sample_idx"]
+                    if prev_idx >= 0:
+                        gap = ts[idx] - ts[prev_idx]
+                    else:
+                        gap = 0
+                    if gap > args.replay_max_gap and replay_kf["x"] is not None:
+                        # reset KF across gap
+                        replay_kf["x"] = None
+                        replay_kf["P"] = None
+                    z_obs = np.array([xs_obs[idx], ys_obs[idx]])
+                    if replay_kf["x"] is None:
+                        # seed
+                        replay_kf["x"] = np.array([z_obs[0], z_obs[1], 0.0, 0.0])
+                        replay_kf["P"] = np.diag([0.1, 0.1, 1.0, 1.0])
+                    else:
+                        H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]])
+                        # Adaptive R: at close range RealSense depth + bbox
+                        # ambiguity is noisier. Linearly interpolate between
+                        # baseline (far) and close (near). Use predicted dist
+                        # rather than raw obs to avoid letting one bad obs
+                        # increase trust in itself.
+                        pred_dist = float(np.sqrt(replay_kf["x"][0]**2
+                                                   + replay_kf["x"][1]**2))
+                        # blend: at dist≤0.5 → close, at dist≥2.0 → baseline
+                        blend = max(0.0, min(1.0, (2.0 - pred_dist) / 1.5))
+                        meas_std_adp = (args.kf_meas_std * (1 - blend)
+                                        + args.kf_meas_std_close * blend)
+                        R = np.eye(2) * (meas_std_adp ** 2)
+                        y_innov = z_obs - H @ replay_kf["x"]
+                        S = H @ replay_kf["P"] @ H.T + R
+                        # Mahalanobis (NIS) for outlier gate
+                        nis = float(y_innov @ np.linalg.solve(S, y_innov))
+                        if nis > (args.kf_gate ** 2):
+                            replay_kf["n_rejected"] += 1
+                            if replay_kf["n_rejected"] % 5 == 1:
+                                print(f"  [KF reject @t={sim_t:.2f}s] obs=({z_obs[0]:.2f},{z_obs[1]:.2f}) "
+                                      f"vs pred=({replay_kf['x'][0]:.2f},{replay_kf['x'][1]:.2f}) "
+                                      f"nis={nis:.1f} > gate²={args.kf_gate**2:.0f}", flush=True)
+                        else:
+                            K = replay_kf["P"] @ H.T @ np.linalg.inv(S)
+                            replay_kf["x"] = replay_kf["x"] + K @ y_innov
+                            replay_kf["P"] = (np.eye(4) - K @ H) @ replay_kf["P"]
+                            replay_kf["n_accepted"] += 1
+                    replay_kf["last_sample_idx"] = idx
+
+                if replay_kf["x"] is not None:
+                    wx = float(replay_kf["x"][0])
+                    wy = float(replay_kf["x"][1])
+                    lidar_detected_pos = np.array([wx, wy, z_const], dtype=np.float64)
+                    obs_gt_pos[:] = wx, wy, z_const
+                else:
+                    lidar_detected_pos = None
+                    obs_gt_pos[:] = 4.0, 0.0, 0.85
+        elif replay_traj is not None:
+            # YOLO replay: WORLD-frame fixed (assumes recording was with robot near origin/stationary).
+            # Person stays at the world position they had at capture time,
+            # so when sim G1 dodges the person doesn't chase it.
+            #
+            # Two safety nets:
+            #   1) gap handling: if neighbouring samples > replay_max_gap apart,
+            #      treat as "no detection" (avoids fake interpolated drift)
+            #   2) low-pass filter: EMA on (x,y) smooths YOLO ID-swap jumps
+            replay_t = sim_t - replay_t0_sim
+            ts = replay_traj[:, 0]
+            if replay_t < ts[0] or replay_t > ts[-1]:
+                lidar_detected_pos = None
+                obs_gt_pos[:] = 4.0, 0.0, 0.85
+            else:
+                # Find bracketing samples — gap-aware
+                i_right = int(np.searchsorted(ts, replay_t))
+                i_left = max(0, i_right - 1)
+                gap = ts[i_right] - ts[i_left] if i_right < len(ts) else float('inf')
+                if gap > args.replay_max_gap:
+                    lidar_detected_pos = None
+                    obs_gt_pos[:] = 4.0, 0.0, 0.85
+                    replay_lpf["xy"] = None   # reset filter across gaps
+                else:
+                    wx_raw = float(np.interp(replay_t, ts, replay_traj[:, 1]))
+                    wy_raw = float(np.interp(replay_t, ts, replay_traj[:, 2]))
+                    z = float(np.interp(replay_t, ts, replay_traj[:, 3]))
+                    # EMA low-pass filter on (x, y) — re-seeds after gap or first detect
+                    if replay_lpf["xy"] is None:
+                        replay_lpf["xy"] = np.array([wx_raw, wy_raw], dtype=np.float64)
+                    else:
+                        a = args.replay_lpf_alpha
+                        replay_lpf["xy"] = (a * np.array([wx_raw, wy_raw])
+                                            + (1 - a) * replay_lpf["xy"])
+                    wx, wy = float(replay_lpf["xy"][0]), float(replay_lpf["xy"][1])
+                    lidar_detected_pos = np.array([wx, wy, z], dtype=np.float64)
+                    obs_gt_pos[:] = wx, wy, z
+        else:
+            # Original synthetic obstacle + LidarSim path
+            if obstacle_phase == "CROSSING":
+                obs_gt_pos[:2] += cross_dir * args.obstacle_speed * control_dt
+                if np.linalg.norm(obs_gt_pos[:2] - start_pos) > 5.0:
+                    obstacle_phase = "GONE"
+            if ctrl_step % lidar_every == 0:
+                detected = lidar.detect_obstacle(robot_pos, max_dist=5.0, min_height=0.3)
+                if detected is not None:
+                    lidar_detected_pos = detected.copy()
+
+        # Update mocap position (for visualization in both modes)
         mocap_idx = m.body_mocapid[obstacle_mocap_id]
         if mocap_idx >= 0:
             d.mocap_pos[mocap_idx] = obs_gt_pos
-
-        # LiDAR scan
-        if ctrl_step % lidar_every == 0:
-            detected = lidar.detect_obstacle(robot_pos, max_dist=5.0, min_height=0.3)
-            if detected is not None:
-                lidar_detected_pos = detected.copy()
 
         if lidar_detected_pos is not None:
             dist = float(np.linalg.norm(robot_pos[:2] - lidar_detected_pos[:2]))
         else:
             dist = float("inf")
+
+        # ── DEBUG: print every tick where dist < safety+0.3 (track trigger conditions) ──
+        if dist < safety_distance + 0.3:
+            print(f"  [debug t={sim_t:.2f}s step={ctrl_step}] dist={dist:.2f}m "
+                  f"safety={safety_distance:.2f} | active={dodge_active} "
+                  f"converged={return_converged}", flush=True)
 
         # ── Dodge state machine ──
         if dist < safety_distance and not dodge_active and not return_converged:
@@ -239,7 +493,7 @@ def main():
             dodge_start_pos = robot_pos[:2].copy()
             dodge_start_yaw = robot_yaw
             dodge.reset(robot_pos[:2], robot_yaw)
-            print(f"  step={ctrl_step:4d} [DODGE START] dist={dist:.2f}m")
+            print(f"  step={ctrl_step:4d} [DODGE START] dist={dist:.2f}m", flush=True)
 
         if dodge_active:
             depart = dist > safety_distance + 0.10
@@ -249,7 +503,11 @@ def main():
                                          else np.array([10, 10, 0.75]),
                                          dt=control_dt, depart_mask=False)
                 vel = dodge.get_velocity_command(obs18)
-                cmd[:] = vel
+                # HARD CAP: 0.2 m/s linear, 0.5 rad/s angular (matches real-robot
+                # deploy ceiling so sim shows realistic-magnitude behavior)
+                cmd[0] = float(np.clip(vel[0], -0.20, 0.20))
+                cmd[1] = float(np.clip(vel[1], -0.20, 0.20))
+                cmd[2] = float(np.clip(vel[2], -0.50, 0.50))
             elif return_head is not None:
                 disp_w = robot_pos[:2] - dodge_start_pos
                 disp_b = dodge._body_frame_xy(disp_w, robot_yaw)
@@ -258,9 +516,9 @@ def main():
                     _ret = return_head(_d).squeeze(0).numpy()
                 yaw_err = robot_yaw - dodge_start_yaw
                 yaw_err = (yaw_err + np.pi) % (2 * np.pi) - np.pi
-                cmd[0] = float(_ret[0]) * dodge.MAX_LIN_VEL
-                cmd[1] = float(_ret[1]) * dodge.MAX_LIN_VEL
-                cmd[2] = float(np.clip(-2.0 * yaw_err, -1, 1)) * dodge.MAX_ANG_VEL
+                cmd[0] = float(np.clip(_ret[0] * dodge.MAX_LIN_VEL, -0.20, 0.20))
+                cmd[1] = float(np.clip(_ret[1] * dodge.MAX_LIN_VEL, -0.20, 0.20))
+                cmd[2] = float(np.clip(-2.0 * yaw_err, -0.5, 0.5))
 
                 disp_mag = float(np.linalg.norm(disp_w))
                 if disp_mag < 0.20 and abs(yaw_err) < 0.15:
@@ -274,6 +532,13 @@ def main():
                 cmd[:] = 0
         else:
             cmd[:] = 0
+            # Reset converged when person leaves "post-dodge cool-off" zone
+            # → allows re-trigger if they come close again
+            if return_converged and dist > safety_distance + args.reset_distance_offset:
+                return_converged = False
+                print(f"  step={ctrl_step:4d} [RESET] dist={dist:.2f}m > "
+                      f"{safety_distance + args.reset_distance_offset:.2f}m, "
+                      f"converged → False (ready to re-trigger)", flush=True)
 
         # ── Build locomotion obs ──
         qj = d.qpos[7:]
