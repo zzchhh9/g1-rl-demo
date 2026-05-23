@@ -106,6 +106,7 @@ WAIT_YOLO_BEFORE_DEPLOY="${WAIT_YOLO_BEFORE_DEPLOY:-1}"
 YOLO_STALENESS="${YOLO_STALENESS:-0.8}"
 YOLO_PREDEPLOY_MIN_COUNT="${YOLO_PREDEPLOY_MIN_COUNT:-3}"
 YOLO_PREDEPLOY_STABLE_S="${YOLO_PREDEPLOY_STABLE_S:-0.5}"
+YOLO_PREDEPLOY_TIMEOUT="${YOLO_PREDEPLOY_TIMEOUT:-45.0}"
 RECORD_DEPLOY="${RECORD_DEPLOY:-1}"
 RENDER_DEPLOY_VIDEO="${RENDER_DEPLOY_VIDEO:-1}"
 RUN_ID="${RUN_ID:-rhea_$(date +%Y%m%d_%H%M%S)}"
@@ -131,6 +132,7 @@ Common env overrides:
   DDS_ODOM_TOPIC=$DDS_ODOM_TOPIC
   DDS_YOLO_TOPIC=$DDS_YOLO_TOPIC
   YOLO_SOURCE=$YOLO_SOURCE               # real | fake
+  YOLO_PREDEPLOY_TIMEOUT=$YOLO_PREDEPLOY_TIMEOUT
   FAKE_YOLO_START_DELAY=$FAKE_YOLO_START_DELAY
   FAKE_YOLO_START_DIST=$FAKE_YOLO_START_DIST
   FAKE_YOLO_END_DIST=$FAKE_YOLO_END_DIST
@@ -414,9 +416,10 @@ run_deploy() {
             uv run python scripts/dds_wait_json.py "$NET" \
               --topic "$DDS_YOLO_TOPIC" \
               --stale "$YOLO_STALENESS" \
-              --timeout "$PREDEPLOY_TIMEOUT" \
+              --timeout "$YOLO_PREDEPLOY_TIMEOUT" \
               --min-count "$YOLO_PREDEPLOY_MIN_COUNT" \
-              --stable-seconds "$YOLO_PREDEPLOY_STABLE_S"
+              --stable-seconds "$YOLO_PREDEPLOY_STABLE_S" \
+              --require-ready
         fi
     fi
 

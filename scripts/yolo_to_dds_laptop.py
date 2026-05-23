@@ -19,7 +19,7 @@ Run on laptop:
         python scripts/yolo_to_dds_laptop.py
 """
 
-import argparse, json, math, socket, struct, time
+import argparse, json, math, socket, struct, threading, time
 import numpy as np
 import cv2
 
@@ -78,14 +78,50 @@ def main():
                         "its depth distance is at or below this threshold.")
     p.add_argument("--lock-track-id", type=int, default=None,
                    help="Publish only this specific ByteTrack person track_id.")
+    p.add_argument("--startup-heartbeat-hz", type=float, default=2.0,
+                   help="Publish ready=false n=0 messages while TCP/YOLO warm up.")
     args = p.parse_args()
 
     print(f"[dds] init domain 0 on {args.net}")
     ChannelFactoryInitialize(0, args.net)
     pub = ChannelPublisher(args.topic, String_); pub.Init()
     msg = std_msgs_msg_dds__String_()
+    startup_stop = threading.Event()
+    startup_status = {"text": "starting"}
+
+    def publish_startup_heartbeat():
+        if args.startup_heartbeat_hz <= 0.0:
+            return
+        hb_msg = std_msgs_msg_dds__String_()
+        period = 1.0 / max(0.1, float(args.startup_heartbeat_hz))
+        frame_id = -1
+        while not startup_stop.is_set():
+            hb_msg.data = json.dumps({
+                "frame_id": frame_id,
+                "ts_ms": int(time.time() * 1000),
+                "n": 0,
+                "ready": False,
+                "status": startup_status["text"],
+                "track_locked": False,
+                "locked_track_id": None,
+                "candidate_n": 0,
+                "ignored_n": 0,
+                "raw_box_n": 0,
+                "depth_reject_n": 0,
+                "held": False,
+                "held_age": None,
+            })
+            pub.Write(hb_msg)
+            frame_id -= 1
+            startup_stop.wait(period)
+
+    startup_thread = threading.Thread(
+        target=publish_startup_heartbeat, name="yolo_startup_heartbeat",
+        daemon=True)
+    startup_thread.start()
 
     print(f"[tcp] connecting to {args.robot_ip}:{args.port} ...")
+    startup_status["text"] = "connecting_rgbd"
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((args.robot_ip, args.port))
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -95,7 +131,11 @@ def main():
     print(f"[tcp] intrinsics: fx={fx:.1f} cx={cx_px:.1f}  source rate {info.get('rate_hz', '?')}Hz")
 
     print(f"[yolo] loading {args.model} ...")
+    startup_status["text"] = "loading_yolo"
     model = YOLO(args.model)
+    startup_status["text"] = "ready"
+    startup_stop.set()
+    startup_thread.join(timeout=1.0)
 
     annotated_frames = [] if args.record_video else None   # list of (frame_bgr, t_sec)
     traj_rows = [] if args.save_npy else None
@@ -173,6 +213,7 @@ def main():
                 rad = math.radians(nearest["bearing"])
                 payload = {
                     "frame_id": frame_id, "ts_ms": ts_ms, "n": 1,
+                    "ready": True,
                     "x_fwd":  nearest["d"] * math.cos(rad),
                     "y_left": -nearest["d"] * math.sin(rad),
                     "z": 0.85,
@@ -212,6 +253,7 @@ def main():
             else:
                 payload = {
                     "frame_id": frame_id, "ts_ms": ts_ms, "n": 0,
+                    "ready": True,
                     "track_locked": locked_tid is not None,
                     "locked_track_id": locked_tid,
                     "candidate_n": len(candidates),
@@ -286,6 +328,7 @@ def main():
         print(f"\n[stop] robot disconnected: {e}")
     finally:
         sock.close()
+        startup_stop.set()
         print(f"[done] {n_frames} frames, {n_detect} with detection")
 
         if annotated_frames:

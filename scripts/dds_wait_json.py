@@ -25,6 +25,8 @@ def main():
     p.add_argument("--min-count", type=int, default=3)
     p.add_argument("--stable-seconds", type=float, default=0.5,
                    help="Require this much continuous fresh data before success.")
+    p.add_argument("--require-ready", action="store_true",
+                   help="Require JSON field ready=true before counting as stable.")
     p.add_argument("--print-every", type=float, default=1.0)
     args = p.parse_args()
 
@@ -53,7 +55,9 @@ def main():
         data = state["data"]
         age = time.time() - state["recv"] if data is not None else float("inf")
         count = int(state["count"])
-        if data is not None and age <= args.stale:
+        ready_ok = (not args.require_ready) or (
+            isinstance(data, dict) and data.get("ready") is True)
+        if data is not None and age <= args.stale and ready_ok:
             if stable_start is None:
                 stable_start = time.time()
                 stable_first_count = count
@@ -75,8 +79,13 @@ def main():
             else:
                 stable_elapsed = 0.0 if stable_start is None else time.time() - stable_start
                 seen = 0 if stable_first_count is None else count - int(stable_first_count) + 1
+                ready_s = ""
+                if args.require_ready and isinstance(data, dict):
+                    ready_s = (f" ready={data.get('ready')} "
+                               f"status={data.get('status', '')}")
                 print(f"[wait-json] waiting topic={args.topic} age={age:.2f}s "
-                      f"count={count} stable={stable_elapsed:.2f}s seen={seen}")
+                      f"count={count} stable={stable_elapsed:.2f}s seen={seen}"
+                      f"{ready_s}")
 
     raise SystemExit(f"[wait-json] TIMEOUT topic={args.topic} "
                      f"count={state['count']} timeout={args.timeout:.1f}s")
