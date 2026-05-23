@@ -73,7 +73,7 @@ def main():
     p.add_argument("net", nargs="?", default="eno1")
     p.add_argument("--topic", default="rt/yolo/person")
     p.add_argument("--hz", type=float, default=10.0)
-    p.add_argument("--start-delay", type=float, default=8.0,
+    p.add_argument("--start-delay", type=float, default=15.0,
                    help="Seconds of n=0 heartbeat before the fake obstacle appears.")
     p.add_argument("--hold", type=float, default=2.0,
                    help="Seconds to hold the fake obstacle at --start-dist.")

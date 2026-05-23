@@ -33,14 +33,14 @@ YOLO_SOURCE="${YOLO_SOURCE:-real}"  # real | fake
 DEPTH_OFFSET="${DEPTH_OFFSET:-0.20}"
 YOLO_PRINT_EVERY="${YOLO_PRINT_EVERY:-20}"
 YOLO_LOCK_FIRST_TRACK="${YOLO_LOCK_FIRST_TRACK:-0}"
-FAKE_YOLO_START_DELAY="${FAKE_YOLO_START_DELAY:-8.0}"
+FAKE_YOLO_START_DELAY="${FAKE_YOLO_START_DELAY:-15.0}"
 FAKE_YOLO_HOLD="${FAKE_YOLO_HOLD:-2.0}"
 FAKE_YOLO_FADE="${FAKE_YOLO_FADE:-3.0}"
 FAKE_YOLO_START_DIST="${FAKE_YOLO_START_DIST:-0.50}"
 FAKE_YOLO_END_DIST="${FAKE_YOLO_END_DIST:-1.60}"
 FAKE_YOLO_BEARING_DEG="${FAKE_YOLO_BEARING_DEG:-0.0}"
 FAKE_YOLO_TRACK_ID="${FAKE_YOLO_TRACK_ID:-9001}"
-MAX_VEL="${MAX_VEL:-0.40}"
+MAX_VEL="${MAX_VEL:-0.30}"
 # Keep the real evasive trigger close to the robot. By default, one meter is
 # the boundary: dodge starts inside it, stops outside it after the return clear
 # delay, then returns.
@@ -52,7 +52,19 @@ RETURN_ODOM_SOURCE="${RETURN_ODOM_SOURCE:-external}"
 RETURN_MODE="${RETURN_MODE:-geo}"
 RETURN_FRAME_CALIB="${RETURN_FRAME_CALIB:-}"
 RETURN_FRAME_ROTATE_WITH_SLAM_YAW="${RETURN_FRAME_ROTATE_WITH_SLAM_YAW:-0}"
+RETURN_YAW_SOURCE="${RETURN_YAW_SOURCE:-fused_lowstate}"
 RETURN_MAX_SLAM_YAW_DRIFT="${RETURN_MAX_SLAM_YAW_DRIFT:-0.45}"
+RETURN_LATERAL_SIGN="${RETURN_LATERAL_SIGN:--1}"
+RETURN_MAX_VEL="${RETURN_MAX_VEL:-0.25}"
+RETURN_MIN_VEL="${RETURN_MIN_VEL:-0.12}"
+RETURN_GAIN="${RETURN_GAIN:-0.8}"
+RETURN_LAT_GAIN="${RETURN_LAT_GAIN:-0.35}"
+RETURN_MAX_LAT_VEL="${RETURN_MAX_LAT_VEL:-0.08}"
+RETURN_DONE_DIST="${RETURN_DONE_DIST:-0.10}"
+RETURN_TIMEOUT="${RETURN_TIMEOUT:-15.0}"
+RETURN_STATIONARY_TIME="${RETURN_STATIONARY_TIME:-1.00}"
+RETURN_STATIONARY_DISP="${RETURN_STATIONARY_DISP:-0.03}"
+RETURN_STATIONARY_SPEED="${RETURN_STATIONARY_SPEED:-0.03}"
 if [ -z "${RETURN_PROBE+x}" ]; then
     if [ "$SLAM_BACKEND" = "fast_lio" ]; then
         RETURN_PROBE=0
@@ -124,6 +136,15 @@ Common env overrides:
   FAKE_YOLO_END_DIST=$FAKE_YOLO_END_DIST
   RETURN_ODOM_SOURCE=$RETURN_ODOM_SOURCE   # external | auto | cmd
   RETURN_MODE=$RETURN_MODE                 # geo | p; head requires ALLOW_RETURN_HEAD=1
+  RETURN_LATERAL_SIGN=$RETURN_LATERAL_SIGN # SDK lateral sign for return
+  RETURN_YAW_SOURCE=$RETURN_YAW_SOURCE     # fused_lowstate | slam | lowstate
+  RETURN_DONE_DIST=$RETURN_DONE_DIST       # return success radius in meters
+  RETURN_TIMEOUT=$RETURN_TIMEOUT           # max seconds in RETURN
+  RETURN_MAX_VEL=$RETURN_MAX_VEL           # return per-axis cap
+  RETURN_MIN_VEL=$RETURN_MIN_VEL           # return minimum command norm
+  RETURN_GAIN=$RETURN_GAIN                 # forward return gain
+  RETURN_LAT_GAIN=$RETURN_LAT_GAIN         # lateral return gain
+  RETURN_MAX_LAT_VEL=$RETURN_MAX_LAT_VEL   # lateral return cap
   RETURN_PROBE=$RETURN_PROBE               # fast_lio default 0; lio_sam default 1
   RETURN_FRAME_CALIB=$RETURN_FRAME_CALIB   # optional manual body/SLAM frame JSON
   STARTUP_FRAME_CALIB=$STARTUP_FRAME_CALIB # 1 to actively calibrate before YOLO dodge
@@ -424,7 +445,19 @@ run_deploy() {
     if [ "$RETURN_FRAME_ROTATE_WITH_SLAM_YAW" = "1" ]; then
         args+=(--return_frame_rotate_with_slam_yaw)
     fi
+    args+=(--return_yaw_source "$RETURN_YAW_SOURCE")
     args+=(--return_max_slam_yaw_drift "$RETURN_MAX_SLAM_YAW_DRIFT")
+    args+=(--return_lateral_sign "$RETURN_LATERAL_SIGN")
+    args+=(--return_max_vel "$RETURN_MAX_VEL")
+    args+=(--return_min_vel "$RETURN_MIN_VEL")
+    args+=(--return_gain "$RETURN_GAIN")
+    args+=(--return_lat_gain "$RETURN_LAT_GAIN")
+    args+=(--return_max_lat_vel "$RETURN_MAX_LAT_VEL")
+    args+=(--return_done_dist "$RETURN_DONE_DIST")
+    args+=(--return_timeout "$RETURN_TIMEOUT")
+    args+=(--return_stationary_time "$RETURN_STATIONARY_TIME")
+    args+=(--return_stationary_disp "$RETURN_STATIONARY_DISP")
+    args+=(--return_stationary_speed "$RETURN_STATIONARY_SPEED")
     if [ "$RETURN_PROBE" = "1" ]; then
         args+=(--return_probe)
     else

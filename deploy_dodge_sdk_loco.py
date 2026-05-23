@@ -8,7 +8,7 @@ Usage:
     1. Put the robot in the blue high-level locomotion mode from the remote:
        hold L2 + UP until the controller light is blue.
     2. Run:
-       uv run python deploy_dodge_sdk_loco.py eno1 --source yolo --max_vel 0.40
+       uv run python deploy_dodge_sdk_loco.py eno1 --source yolo --max_vel 0.30
 
 Controls:
     A      -> enable autonomous dodge commands if --wait_for_a is passed
@@ -566,6 +566,41 @@ def _return_frame_rotation(yaw: float,
     return _yaw_to_world_rot(yaw), "lowstate_yaw"
 
 
+def _fused_return_yaw(origin_odom_yaw: float | None,
+                      origin_low_yaw: float | None,
+                      current_low_yaw: float,
+                      current_odom_yaw: float | None,
+                      source: str) -> tuple[float | None, str, float | None, float | None, float | None]:
+    """Yaw used for world->SDK return commands.
+
+    FAST-LIO x/y is useful as a map displacement, but its live yaw can diverge
+    during high-level gait transitions. The robot lowstate yaw is a better
+    relative body-heading signal, so the default keeps SLAM's yaw at the dodge
+    origin and advances it by lowstate's relative yaw change.
+    """
+    slam_delta = None
+    low_delta = None
+    mismatch = None
+    if origin_odom_yaw is not None and current_odom_yaw is not None:
+        slam_delta = _wrap_pi(float(current_odom_yaw) - float(origin_odom_yaw))
+    if origin_low_yaw is not None:
+        low_delta = _wrap_pi(float(current_low_yaw) - float(origin_low_yaw))
+    if slam_delta is not None and low_delta is not None:
+        mismatch = abs(_wrap_pi(slam_delta - low_delta))
+
+    if source == "slam":
+        if current_odom_yaw is not None:
+            return float(current_odom_yaw), "live_slam_yaw", slam_delta, low_delta, mismatch
+        return float(current_low_yaw), "lowstate_abs_yaw", slam_delta, low_delta, mismatch
+    if source == "lowstate":
+        return float(current_low_yaw), "lowstate_abs_yaw", slam_delta, low_delta, mismatch
+    if origin_odom_yaw is not None and low_delta is not None:
+        return _wrap_pi(float(origin_odom_yaw) + low_delta), "slam_origin+lowstate_delta", slam_delta, low_delta, mismatch
+    if current_odom_yaw is not None:
+        return float(current_odom_yaw), "live_slam_yaw", slam_delta, low_delta, mismatch
+    return float(current_low_yaw), "lowstate_abs_yaw", slam_delta, low_delta, mismatch
+
+
 def _disp_world_to_return_frame(disp_w: np.ndarray,
                                 yaw: float,
                                 odom_yaw: float | None,
@@ -980,7 +1015,7 @@ def main():
     parser.add_argument("--no_require_loco_ready", dest="require_loco_ready",
                         action="store_false",
                         help="Do not wait for locomotion mode/balance readiness.")
-    parser.add_argument("--max_vel", type=float, default=0.40,
+    parser.add_argument("--max_vel", type=float, default=0.30,
                         help="Per-axis high-level velocity cap in m/s.")
     parser.add_argument("--max_ang_vel", type=float, default=0.0,
                         help="Yaw-rate cap rad/s. Default 0 keeps camera pointed at the person.")
@@ -1123,9 +1158,18 @@ def main():
                         help="Rotate a loaded/startup return frame by live SLAM "
                              "yaw. Off by default because the current LIO yaw has "
                              "shown large drift while the robot is stationary.")
+    parser.add_argument("--return_yaw_source",
+                        choices=("fused_lowstate", "slam", "lowstate"),
+                        default="fused_lowstate",
+                        help="Yaw source for geo world->SDK return conversion. "
+                             "fused_lowstate keeps SLAM yaw at the dodge origin "
+                             "and applies lowstate's relative yaw change.")
     parser.add_argument("--return_max_slam_yaw_drift", type=float, default=0.45,
-                        help="Abort RETURN if external SLAM yaw drifts this many "
-                             "radians from the dodge origin yaw. Set <=0 to disable.")
+                        help="With --return_yaw_source slam, abort RETURN if live "
+                             "SLAM yaw drifts this many radians from the dodge "
+                             "origin yaw. With fused_lowstate, this is only a "
+                             "SLAM/lowstate yaw-mismatch warning threshold. "
+                             "Set <=0 to disable.")
     parser.add_argument("--startup_frame_calib", action="store_true", default=False,
                         help="Before enabling YOLO dodge, actively calibrate the "
                              "SDK SetVelocity frame against SLAM by walking one "
@@ -1173,7 +1217,7 @@ def main():
     parser.add_argument("--startup_calib_out",
                         default=str(_REPO / "configs" / "startup_return_frame_calib.json"),
                         help="Where to save startup calibration JSON. Empty disables saving.")
-    parser.add_argument("--return_lateral_sign", type=float, default=1.0,
+    parser.add_argument("--return_lateral_sign", type=float, default=-1.0,
                         help="Sign applied to external-odom return lateral command after "
                              "rotating odom displacement into body frame.")
     parser.add_argument("--return_max_lat_vel", type=float, default=0.08,
@@ -1358,14 +1402,21 @@ def main():
     clear_since = None
     odom_origin_xy = None
     odom_origin_yaw = None
+    odom_origin_low_yaw = None
     current_odom_xy = None
     current_odom_yaw = None
+    current_return_yaw = None
+    current_return_yaw_src = "none"
+    current_slam_yaw_delta = None
+    current_low_yaw_delta = None
+    current_slam_low_yaw_mismatch = None
     current_odom_msg_count = None
     return_odom_mode = "cmd"
     external_odom_fresh = False
     external_odom_age = float("inf")
     last_odom_warn = 0.0
     last_return_block_warn = 0.0
+    last_yaw_mismatch_warn = 0.0
     target_track_id = None
     odom_frame = OnlineCommandOdomFrame(
         window=args.return_map_window,
@@ -1421,16 +1472,20 @@ def main():
         else f"{args.return_max_slam_yaw_drift:.2f}rad"
     )
     print("  return frame yaw: "
-          f"{'live SLAM yaw' if args.return_frame_rotate_with_slam_yaw else 'fixed calibrated frame'}; "
-          f"slam_yaw_drift_abort={yaw_abort_s}")
+          f"source={args.return_yaw_source} "
+          f"calib={'rotate' if args.return_frame_rotate_with_slam_yaw else 'fixed'}; "
+          f"slam_yaw_check={yaw_abort_s}")
     if args.return_mode == "geo":
-        print("  return geo: direct point-to-origin control from SLAM x/y + LIO yaw; "
+        print("  return geo: direct point-to-origin control from SLAM x/y + fused body yaw; "
               "online command/SLAM frame is diagnostic only; "
               f"sdk_probe={'on' if args.return_probe else 'off'} "
               f"probe_min={args.return_probe_min_delta:.2f}m "
               f"probe_axis_cos<={args.return_probe_max_axis_cos:.2f} "
               f"probe_retry={args.return_probe_retry_count}x"
               f"@{args.return_probe_retry_scale:.1f}")
+        print(f"  return geo lateral: sdk_y_sign={args.return_lateral_sign:+.0f} "
+              f"lat_gain={args.return_lat_gain:.2f} "
+              f"lat_cap={args.return_max_lat_vel:.2f}m/s")
         if manual_return_frame_rot is not None:
             yaw_ref_s = ("None" if manual_return_frame_yaw_ref is None
                          else f"{manual_return_frame_yaw_ref:+.2f}")
@@ -1565,6 +1620,7 @@ def main():
                     if snap is not None:
                         odom_origin_xy = np.array([snap["x"], snap["y"]], dtype=np.float32)
                         odom_origin_yaw = float(snap["yaw"]) if "yaw" in snap else None
+                        odom_origin_low_yaw = float(low.yaw)
                         current_odom_xy = odom_origin_xy.copy()
                         current_odom_yaw = odom_origin_yaw
                         current_odom_msg_count = int(snap.get("msg_count", 0))
@@ -1636,6 +1692,7 @@ def main():
                             "no stable odom after startup frame calibration")
                     odom_origin_xy = np.array([snap["x"], snap["y"]], dtype=np.float32)
                     odom_origin_yaw = float(snap["yaw"]) if "yaw" in snap else None
+                    odom_origin_low_yaw = float(low.yaw)
                     current_odom_xy = odom_origin_xy.copy()
                     current_odom_yaw = odom_origin_yaw
                     current_odom_msg_count = int(snap.get("msg_count", 0))
@@ -1668,6 +1725,7 @@ def main():
                     if odom_origin_xy is None:
                         odom_origin_xy = current_odom_xy.copy()
                         odom_origin_yaw = current_odom_yaw
+                        odom_origin_low_yaw = float(yaw)
                         print(f"[ODOM] external origin set at "
                               f"{_fmt_vec(odom_origin_xy, 2)}")
                     robot_xy_est[:] = current_odom_xy - odom_origin_xy
@@ -1678,6 +1736,25 @@ def main():
                 external_odom_fresh = False
                 external_odom_age = float("inf")
                 robot_pos[:2] = robot_xy_est
+
+            if return_odom_mode == "external":
+                (current_return_yaw,
+                 current_return_yaw_src,
+                 current_slam_yaw_delta,
+                 current_low_yaw_delta,
+                 current_slam_low_yaw_mismatch) = _fused_return_yaw(
+                    odom_origin_yaw,
+                    odom_origin_low_yaw,
+                    float(yaw),
+                    current_odom_yaw,
+                    args.return_yaw_source,
+                )
+            else:
+                current_return_yaw = float(yaw)
+                current_return_yaw_src = "lowstate_abs_yaw"
+                current_slam_yaw_delta = None
+                current_low_yaw_delta = None
+                current_slam_low_yaw_mismatch = None
 
             now_still = time.time()
             stationary_ready = False
@@ -1807,6 +1884,7 @@ def main():
                         # origin only when a return is interrupted by a new obstacle.
                         odom_origin_xy = current_odom_xy.copy()
                         odom_origin_yaw = current_odom_yaw
+                        odom_origin_low_yaw = float(yaw)
                         robot_xy_est[:] = 0.0
                         robot_pos[:2] = 0.0
                         odom_frame.reset(current_odom_xy, current_odom_msg_count, cmd[:2])
@@ -1818,8 +1896,8 @@ def main():
                         print(f"[ODOM] external dodge origin reset at "
                               f"{_fmt_vec(odom_origin_xy, 2)} "
                               f"yaw={0.0 if odom_origin_yaw is None else odom_origin_yaw:+.2f}")
-                    dodge_start_yaw = (current_odom_yaw if current_odom_yaw is not None
-                                       else yaw)
+                    dodge_start_yaw = (
+                        current_return_yaw if current_return_yaw is not None else yaw)
                     dodge.reset(robot_pos[:2], yaw)
                     if args.lock_first_yolo_track and target_track_id is None:
                         try:
@@ -2013,13 +2091,13 @@ def main():
                                     return_probe_attempt = 0
                                     return_probe_stage_start_xy = None
                                     return_probe_dx_w = None
-                                    print("[RETURN FRAME] geo using SLAM x/y + live LIO yaw "
-                                          "for SDK SetVelocity")
+                                    print("[RETURN FRAME] geo using SLAM x/y + "
+                                          f"{args.return_yaw_source} yaw for SDK SetVelocity")
                             elif args.return_freeze_frame:
                                 return_frame_rot = odom_frame.rotation()
                                 if return_frame_rot is not None:
                                     return_frame_yaw_ref = (
-                                        current_odom_yaw if current_odom_yaw is not None else yaw)
+                                        current_return_yaw if current_return_yaw is not None else yaw)
                                     diag = odom_frame.diagnostics()
                                     det = diag.get("det")
                                     rms = diag.get("fit_rms")
@@ -2098,10 +2176,28 @@ def main():
                 if (args.return_max_slam_yaw_drift > 0.0
                         and return_probe_phase is None
                         and return_odom_mode == "external"
+                        and args.return_yaw_source == "slam"
                         and current_odom_yaw is not None
                         and odom_origin_yaw is not None):
                     return_slam_yaw_drift = abs(
                         _wrap_pi(float(current_odom_yaw) - float(odom_origin_yaw)))
+                elif (args.return_max_slam_yaw_drift > 0.0
+                      and return_probe_phase is None
+                      and return_odom_mode == "external"
+                      and args.return_yaw_source == "fused_lowstate"
+                      and current_slam_low_yaw_mismatch is not None
+                      and current_slam_low_yaw_mismatch
+                      > float(args.return_max_slam_yaw_drift)
+                      and now - last_yaw_mismatch_warn > 1.0):
+                    slam_s = ("None" if current_slam_yaw_delta is None
+                              else f"{current_slam_yaw_delta:+.2f}")
+                    low_s = ("None" if current_low_yaw_delta is None
+                             else f"{current_low_yaw_delta:+.2f}")
+                    print(f"[RETURN WARN] SLAM yaw disagrees with lowstate by "
+                          f"{current_slam_low_yaw_mismatch:.2f}rad "
+                          f"(slam_delta={slam_s} low_delta={low_s}); "
+                          "using fused lowstate yaw and checking actual progress")
+                    last_yaw_mismatch_warn = now
                 if return_odom_mode == "external" and not external_odom_fresh:
                     if return_odom_stale_since is None:
                         return_odom_stale_since = now
@@ -2136,10 +2232,10 @@ def main():
                       and return_slam_yaw_drift
                       > float(args.return_max_slam_yaw_drift)):
                     return_odom_stale_since = None
-                    print(f"[RETURN ABORT] SLAM yaw drift "
+                    print(f"[RETURN ABORT] live SLAM yaw drift "
                           f"{return_slam_yaw_drift:.2f}rad exceeds "
                           f"{float(args.return_max_slam_yaw_drift):.2f}rad; "
-                          "odom is not reliable enough for recover")
+                          "return_yaw_source=slam is not reliable enough for recover")
                     return_active = False
                     return_frame_rot = None
                     return_frame_yaw_ref = None
@@ -2179,6 +2275,7 @@ def main():
                     if (return_odom_mode == "external" and current_odom_xy is not None):
                         odom_origin_xy = current_odom_xy.copy()
                         odom_origin_yaw = current_odom_yaw
+                        odom_origin_low_yaw = float(yaw)
                         stationary_samples.clear()
                         stationary_last_xy = robot_xy_est.copy()
                         stationary_last_t = time.time()
@@ -2491,23 +2588,25 @@ def main():
                             disp_b, return_frame_src = _disp_world_to_return_frame(
                                 disp_w,
                                 yaw=yaw,
-                                odom_yaw=current_odom_yaw,
+                                odom_yaw=current_return_yaw,
                                 frame=None,
                                 frozen_rot=return_frame_rot,
                                 frozen_yaw_ref=return_frame_yaw_ref,
                             )
+                            if return_frame_rot is None:
+                                return_frame_src = current_return_yaw_src
                         else:
                             disp_b, return_frame_src = _disp_world_to_return_frame(
                                 disp_w,
                                 yaw=yaw,
-                                odom_yaw=current_odom_yaw,
+                                odom_yaw=current_return_yaw,
                                 frame=odom_frame if return_odom_mode == "external" else None,
                                 frozen_rot=return_frame_rot,
                                 frozen_yaw_ref=return_frame_yaw_ref,
                             )
                         return_disp_b = disp_b.copy()
                         if args.return_mode == "head" and return_head is not None:
-                            yaw_ref = current_odom_yaw if current_odom_yaw is not None else yaw
+                            yaw_ref = current_return_yaw if current_return_yaw is not None else yaw
                             yaw_err = yaw_ref - dodge_start_yaw
                             yaw_err = (yaw_err + np.pi) % (2 * np.pi) - np.pi
                             target[:], return_raw = _return_head_velocity(
@@ -2534,6 +2633,7 @@ def main():
                             return_head_cmd = None
                             return_guarded = False
                             back_b = -disp_b
+                            back_b[1] *= float(args.return_lateral_sign)
                             target[:] = _shape_return_velocity(
                                 back_b,
                                 gain=args.return_gain,
@@ -2655,11 +2755,17 @@ def main():
                 if args.debug_obs and return_odom_mode == "external":
                     lio_yaw_s = "None" if current_odom_yaw is None else f"{current_odom_yaw:+.2f}"
                     origin_yaw_s = "None" if odom_origin_yaw is None else f"{odom_origin_yaw:+.2f}"
+                    ret_yaw_s = ("None" if current_return_yaw is None
+                                 else f"{current_return_yaw:+.2f}")
+                    mismatch_s = ("None" if current_slam_low_yaw_mismatch is None
+                                  else f"{current_slam_low_yaw_mismatch:.2f}")
                     print(f"  [DBG-ODOM] raw={_fmt_vec(current_odom_xy, 2)} "
                           f"origin={_fmt_vec(odom_origin_xy, 2)} "
                           f"disp_w={_fmt_vec(robot_xy_est, 2)} "
                           f"lio_yaw={lio_yaw_s} origin_yaw={origin_yaw_s} "
-                          f"low_yaw={yaw:+.2f} msg={current_odom_msg_count} "
+                          f"low_yaw={yaw:+.2f} ret_yaw={ret_yaw_s}"
+                          f"/{current_return_yaw_src} yaw_mismatch={mismatch_s} "
+                          f"msg={current_odom_msg_count} "
                           f"age={external_odom_age:.2f}s")
                 if args.debug_obs and (active or return_active):
                     diag = odom_frame.diagnostics()
@@ -2686,21 +2792,28 @@ def main():
                     if args.return_mode == "geo":
                         rot, src = _return_frame_rotation(
                             yaw=yaw,
-                            odom_yaw=current_odom_yaw,
+                            odom_yaw=current_return_yaw,
                             frame=None,
                             frozen_rot=return_frame_rot,
                             frozen_yaw_ref=return_frame_yaw_ref,
                         )
+                        if return_frame_rot is None:
+                            src = current_return_yaw_src
                     else:
                         rot, src = _return_frame_rotation(
                             yaw=yaw,
-                            odom_yaw=current_odom_yaw,
+                            odom_yaw=current_return_yaw,
                             frame=odom_frame if return_odom_mode == "external" else None,
                             frozen_rot=return_frame_rot,
                             frozen_yaw_ref=return_frame_yaw_ref,
                         )
-                    cmd_odom = (rot @ cmd[:2]).astype(np.float32)
-                    target_odom = (rot @ target[:2]).astype(np.float32)
+                    cmd_dbg = np.asarray(cmd[:2], dtype=np.float32).copy()
+                    target_dbg = np.asarray(target[:2], dtype=np.float32).copy()
+                    if args.return_mode == "geo":
+                        cmd_dbg[1] *= float(args.return_lateral_sign)
+                        target_dbg[1] *= float(args.return_lateral_sign)
+                    cmd_odom = (rot @ cmd_dbg).astype(np.float32)
+                    target_odom = (rot @ target_dbg).astype(np.float32)
                     back_w = (-robot_xy_est).astype(np.float32)
                     denom = float(np.linalg.norm(cmd_odom) * np.linalg.norm(back_w))
                     prog_dot = float(np.dot(cmd_odom, back_w))
