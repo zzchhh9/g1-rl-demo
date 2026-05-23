@@ -1,0 +1,272 @@
+[motion_switcher] keeping current built-in mode='ai'
+[ODOM-DDS] subscribing to rt/dodge/odom
+[loco] initial fsm=4(code=0) mode=0(code=0) balance=1(code=0)
+[DodgePolicy] Loaded transformer: embed=64, act=3, obs=18, tokens=7, weights=48/63
+[DodgePolicy] Normalizer loaded: mean shape=torch.Size([1, 18])
+[RETURN] geo mode uses SLAM displacement to return to the dodge origin; SDK velocity frame is measured with a short SLAM probe when enabled.
+[YOLO-DDS] subscribing to rt/yolo/person, stale>0.5s ⇒ no-detect
+[YOLO-DDS] KF q_pos=0.02 q_vel=0.4 R=0.1/0.3 gate=4.0σ
+
+[SDK LOCO DODGE]
+  backend=Unitree LocoClient.SetVelocity, no rt/lowcmd, no motion.pt
+  max_vel=0.30m/s max_ang=0.00rad/s safety=1.00m clear_margin=0.00m cmd_hz=10.0
+  loco state: start=fsm=200 balance=1 require_ready=True
+  close_escape min_away=0.30m/s (capped by per-axis max_vel and bearing)
+  return: on mode=geo max_vel=0.25m/s done=0.10m delay=1.0s timeout=15.0s no_progress=3.0s online_map=3/8
+  return settle: window=0.6s disp<=0.12m or avg_speed<=0.08m/s; max_wait=2.0s before probe/return
+  return geo: direct point-to-origin control from SLAM x/y + LIO yaw; online command/SLAM frame is diagnostic only; sdk_probe=on probe_min=0.04m probe_axis_cos<=0.70 probe_retry=1x@1.7
+  return odom=external topic=rt/dodge/odom stale>0.35s startup=5msgs/1.0s before loco
+  yolo target lock=first-dodge-track
+  yolo start gate: valid non-held track_id required confirm=2 frames
+  Enabled immediately. Press SELECT to StopMove and exit.
+  Software emergency: hold L2+B for 2.0s to send Damp() and exit.
+
+[ODOM] sustained external origin set before loco start at [-0.01,+0.01] age=0.20s msgs=8
+[loco] SetFsmId(200)  # Start
+[loco] SetFsmId(200) returned code=0
+[loco] after Start fsm=200(code=0) mode=1(code=0) balance=0(code=0)
+[loco] SetBalanceMode(1)
+[loco] SetBalanceMode returned code=0
+[loco] after BalanceMode fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[loco] ready check fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[ENABLE] SDK loco dodge commands enabled
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.22,-0.08] odom=external/fresh(0.01s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.23,-0.07] origin=[-0.01,+0.01] disp_w=[-0.22,-0.08] lio_yaw=+0.50 origin_yaw=+0.00 low_yaw=-1.07 msg=14 age=0.01s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.35,-0.15] odom=external/fresh(0.11s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.36,-0.14] origin=[-0.01,+0.01] disp_w=[-0.35,-0.15] lio_yaw=+0.70 origin_yaw=+0.00 low_yaw=-0.90 msg=16 age=0.11s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.47,-0.20] odom=external/fresh(0.02s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.48,-0.20] origin=[-0.01,+0.01] disp_w=[-0.47,-0.20] lio_yaw=+0.53 origin_yaw=+0.00 low_yaw=-0.95 msg=19 age=0.02s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.44,-0.22] odom=external/fresh(0.13s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.45,-0.21] origin=[-0.01,+0.01] disp_w=[-0.44,-0.22] lio_yaw=+0.56 origin_yaw=+0.00 low_yaw=-0.95 msg=21 age=0.13s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.45,-0.23] odom=external/fresh(0.02s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.46,-0.22] origin=[-0.01,+0.01] disp_w=[-0.45,-0.23] lio_yaw=+0.55 origin_yaw=+0.00 low_yaw=-0.97 msg=24 age=0.02s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.45,-0.20] odom=external/fresh(0.13s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.46,-0.19] origin=[-0.01,+0.01] disp_w=[-0.45,-0.20] lio_yaw=+0.56 origin_yaw=+0.00 low_yaw=-0.99 msg=26 age=0.13s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.42,-0.20] odom=external/fresh(0.02s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.43,-0.19] origin=[-0.01,+0.01] disp_w=[-0.42,-0.20] lio_yaw=+0.57 origin_yaw=+0.00 low_yaw=-1.00 msg=29 age=0.02s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.41,-0.24] odom=external/fresh(0.10s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.42,-0.23] origin=[-0.01,+0.01] disp_w=[-0.41,-0.24] lio_yaw=+0.60 origin_yaw=+0.00 low_yaw=-0.99 msg=31 age=0.10s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.43,-0.24] odom=external/fresh(0.03s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.44,-0.23] origin=[-0.01,+0.01] disp_w=[-0.43,-0.24] lio_yaw=+0.60 origin_yaw=+0.00 low_yaw=-1.02 msg=34 age=0.03s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.47,-0.21] odom=external/fresh(0.09s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.48,-0.20] origin=[-0.01,+0.01] disp_w=[-0.47,-0.21] lio_yaw=+0.61 origin_yaw=+0.00 low_yaw=-1.02 msg=36 age=0.09s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.44,-0.20] odom=external/fresh(0.03s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.45,-0.20] origin=[-0.01,+0.01] disp_w=[-0.44,-0.20] lio_yaw=+0.62 origin_yaw=+0.00 low_yaw=-1.03 msg=39 age=0.03s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.40,-0.22] odom=external/fresh(0.11s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.41,-0.21] origin=[-0.01,+0.01] disp_w=[-0.40,-0.22] lio_yaw=+0.60 origin_yaw=+0.00 low_yaw=-1.02 msg=41 age=0.11s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.42,-0.21] odom=external/fresh(0.02s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.43,-0.20] origin=[-0.01,+0.01] disp_w=[-0.42,-0.21] lio_yaw=+0.62 origin_yaw=+0.00 low_yaw=-1.01 msg=44 age=0.02s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.43,-0.19] odom=external/fresh(0.12s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.44,-0.18] origin=[-0.01,+0.01] disp_w=[-0.43,-0.19] lio_yaw=+0.59 origin_yaw=+0.00 low_yaw=-0.99 msg=46 age=0.12s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.38,-0.13] odom=external/fresh(0.03s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.39,-0.12] origin=[-0.01,+0.01] disp_w=[-0.38,-0.13] lio_yaw=+0.56 origin_yaw=+0.00 low_yaw=-0.96 msg=49 age=0.03s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.37,-0.11] odom=external/fresh(0.12s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.38,-0.10] origin=[-0.01,+0.01] disp_w=[-0.37,-0.11] lio_yaw=+0.53 origin_yaw=+0.00 low_yaw=-0.91 msg=51 age=0.12s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.36,-0.10] odom=external/fresh(0.03s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.38,-0.09] origin=[-0.01,+0.01] disp_w=[-0.36,-0.10] lio_yaw=+0.48 origin_yaw=+0.00 low_yaw=-0.88 msg=54 age=0.03s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.35,-0.10] odom=external/fresh(0.13s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.36,-0.09] origin=[-0.01,+0.01] disp_w=[-0.35,-0.10] lio_yaw=+0.45 origin_yaw=+0.00 low_yaw=-0.81 msg=56 age=0.13s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.32,-0.07] odom=external/fresh(0.03s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.33,-0.06] origin=[-0.01,+0.01] disp_w=[-0.32,-0.07] lio_yaw=+0.37 origin_yaw=+0.00 low_yaw=-0.77 msg=59 age=0.03s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.34,-0.02] odom=external/fresh(0.14s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.35,-0.01] origin=[-0.01,+0.01] disp_w=[-0.34,-0.02] lio_yaw=+0.34 origin_yaw=+0.00 low_yaw=-0.70 msg=61 age=0.14s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.43 obs_b=[+1.34,+0.50] est_xy=[-0.32,-0.02] odom=external/fresh(0.03s) track=-1/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.33,-0.01] origin=[-0.01,+0.01] disp_w=[-0.32,-0.02] lio_yaw=+0.26 origin_yaw=+0.00 low_yaw=-0.65 msg=64 age=0.03s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.41 obs_b=[+1.29,+0.55] est_xy=[-0.31,-0.04] odom=external/fresh(0.14s) track=-1/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.32,-0.03] origin=[-0.01,+0.01] disp_w=[-0.31,-0.04] lio_yaw=+0.24 origin_yaw=+0.00 low_yaw=-0.66 msg=66 age=0.14s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.43 obs_b=[+1.32,+0.54] est_xy=[-0.33,-0.02] odom=external/fresh(0.04s) track=-1/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.34,-0.01] origin=[-0.01,+0.01] disp_w=[-0.33,-0.02] lio_yaw=+0.27 origin_yaw=+0.00 low_yaw=-0.61 msg=69 age=0.04s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.33,-0.02] odom=external/fresh(0.13s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.34,-0.01] origin=[-0.01,+0.01] disp_w=[-0.33,-0.02] lio_yaw=+0.19 origin_yaw=+0.00 low_yaw=-0.55 msg=71 age=0.13s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.30,+0.01] odom=external/fresh(0.03s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.31,+0.02] origin=[-0.01,+0.01] disp_w=[-0.30,+0.01] lio_yaw=+0.10 origin_yaw=+0.00 low_yaw=-0.49 msg=74 age=0.03s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.31,+0.04] odom=external/fresh(0.14s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.32,+0.05] origin=[-0.01,+0.01] disp_w=[-0.31,+0.04] lio_yaw=+0.08 origin_yaw=+0.00 low_yaw=-0.51 msg=76 age=0.14s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.33,+0.01] odom=external/fresh(0.04s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.35,+0.02] origin=[-0.01,+0.01] disp_w=[-0.33,+0.01] lio_yaw=+0.10 origin_yaw=+0.00 low_yaw=-0.50 msg=79 age=0.04s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.35,-0.05] odom=external/fresh(0.14s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.36,-0.04] origin=[-0.01,+0.01] disp_w=[-0.35,-0.05] lio_yaw=+0.12 origin_yaw=+0.00 low_yaw=-0.51 msg=81 age=0.14s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=2.17 obs_b=[+2.00,+0.84] est_xy=[-0.37,-0.06] odom=external/fresh(0.04s) track=-1/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.38,-0.05] origin=[-0.01,+0.01] disp_w=[-0.37,-0.06] lio_yaw=+0.14 origin_yaw=+0.00 low_yaw=-0.49 msg=84 age=0.04s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=2.17 obs_b=[+2.00,+0.85] est_xy=[-0.39,-0.05] odom=external/fresh(0.14s) track=-1/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.40,-0.04] origin=[-0.01,+0.01] disp_w=[-0.39,-0.05] lio_yaw=+0.11 origin_yaw=+0.00 low_yaw=-0.51 msg=86 age=0.14s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=2.23 obs_b=[+2.14,+0.64] est_xy=[-0.40,-0.06] odom=external/fresh(0.04s) track=6/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.41,-0.05] origin=[-0.01,+0.01] disp_w=[-0.40,-0.06] lio_yaw=+0.13 origin_yaw=+0.00 low_yaw=-0.52 msg=89 age=0.04s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=2.08 obs_b=[+2.02,+0.49] est_xy=[-0.39,-0.10] odom=external/fresh(0.14s) track=-1/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.41,-0.09] origin=[-0.01,+0.01] disp_w=[-0.39,-0.10] lio_yaw=+0.15 origin_yaw=+0.00 low_yaw=-0.53 msg=91 age=0.14s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.96 obs_b=[+1.92,+0.41] est_xy=[-0.42,-0.10] odom=external/fresh(0.03s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.44,-0.09] origin=[-0.01,+0.01] disp_w=[-0.42,-0.10] lio_yaw=+0.16 origin_yaw=+0.00 low_yaw=-0.54 msg=94 age=0.03s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.85 obs_b=[+1.83,+0.25] est_xy=[-0.43,-0.11] odom=external/fresh(0.15s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.45,-0.10] origin=[-0.01,+0.01] disp_w=[-0.43,-0.11] lio_yaw=+0.16 origin_yaw=+0.00 low_yaw=-0.54 msg=96 age=0.15s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.78 obs_b=[+1.77,+0.19] est_xy=[-0.44,-0.14] odom=external/fresh(0.04s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.45,-0.13] origin=[-0.01,+0.01] disp_w=[-0.44,-0.14] lio_yaw=+0.15 origin_yaw=+0.00 low_yaw=-0.54 msg=99 age=0.04s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.66 obs_b=[+1.65,+0.18] est_xy=[-0.45,-0.13] odom=external/fresh(0.15s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.46,-0.12] origin=[-0.01,+0.01] disp_w=[-0.45,-0.13] lio_yaw=+0.16 origin_yaw=+0.00 low_yaw=-0.56 msg=101 age=0.15s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.57 obs_b=[+1.56,+0.16] est_xy=[-0.46,-0.12] odom=external/fresh(0.05s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.47,-0.11] origin=[-0.01,+0.01] disp_w=[-0.46,-0.12] lio_yaw=+0.17 origin_yaw=+0.00 low_yaw=-0.57 msg=104 age=0.05s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.45 obs_b=[+1.44,+0.19] est_xy=[-0.47,-0.17] odom=external/fresh(0.15s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.48,-0.16] origin=[-0.01,+0.01] disp_w=[-0.47,-0.17] lio_yaw=+0.19 origin_yaw=+0.00 low_yaw=-0.58 msg=106 age=0.15s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.41 obs_b=[+1.40,+0.18] est_xy=[-0.48,-0.18] odom=external/fresh(0.05s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.49,-0.17] origin=[-0.01,+0.01] disp_w=[-0.48,-0.18] lio_yaw=+0.20 origin_yaw=+0.00 low_yaw=-0.58 msg=109 age=0.05s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.37 obs_b=[+1.36,+0.13] est_xy=[-0.50,-0.13] odom=external/fresh(0.15s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.51,-0.12] origin=[-0.01,+0.01] disp_w=[-0.50,-0.13] lio_yaw=+0.19 origin_yaw=+0.00 low_yaw=-0.60 msg=111 age=0.15s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.28 obs_b=[+1.27,+0.16] est_xy=[-0.49,-0.15] odom=external/fresh(0.06s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.51,-0.14] origin=[-0.01,+0.01] disp_w=[-0.49,-0.15] lio_yaw=+0.22 origin_yaw=+0.00 low_yaw=-0.62 msg=114 age=0.06s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.15 obs_b=[+1.14,+0.18] est_xy=[-0.47,-0.17] odom=external/fresh(0.15s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.48,-0.16] origin=[-0.01,+0.01] disp_w=[-0.47,-0.17] lio_yaw=+0.23 origin_yaw=+0.00 low_yaw=-0.63 msg=116 age=0.15s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.14 obs_b=[+1.12,+0.19] est_xy=[-0.48,-0.15] odom=external/fresh(0.05s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.49,-0.14] origin=[-0.01,+0.01] disp_w=[-0.48,-0.15] lio_yaw=+0.25 origin_yaw=+0.00 low_yaw=-0.64 msg=119 age=0.05s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.12 obs_b=[+1.11,+0.14] est_xy=[-0.49,-0.16] odom=external/fresh(0.15s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.50,-0.15] origin=[-0.01,+0.01] disp_w=[-0.49,-0.16] lio_yaw=+0.26 origin_yaw=+0.00 low_yaw=-0.67 msg=121 age=0.15s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.06 obs_b=[+1.05,+0.10] est_xy=[-0.49,-0.18] odom=external/fresh(0.06s) track=8/lock=None dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.50,-0.17] origin=[-0.01,+0.01] disp_w=[-0.49,-0.18] lio_yaw=+0.28 origin_yaw=+0.00 low_yaw=-0.67 msg=124 age=0.06s
+[ODOM] external dodge origin reset at [-0.51,-0.16] yaw=+0.29
+[YOLO-DDS] locked to track_id=8
+[TARGET LOCK] using first dodge YOLO track_id=8; later tracks ignored
+[DODGE START] dist=0.91m
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[DODGE ] cmd=[-0.15,+0.15,+0.00] target=[-0.22,+0.22,+0.00] dist=0.91 obs_b=[+0.61,-0.33] est_xy=[+0.00,+0.00] odom=external/fresh(0.17s) track=8/lock=None dir=away par=-0.20 perp=+0.06
+  [DBG-ODOM] raw=[-0.51,-0.16] origin=[-0.51,-0.16] disp_w=[+0.00,+0.00] lio_yaw=+0.29 origin_yaw=+0.29 low_yaw=-0.68 msg=126 age=0.17s
+  [DBG-FRAME] samples=0 rot=None map=None det=None rms=None scale=[None,None] last_cmd=None last_dodom=None last_pred=None
+  [DBG-SAFE] close_escape par -0.288->-0.300 perp +0.086->+0.086
+[DODGE ] cmd=[-0.30,+0.30,+0.00] target=[-0.30,+0.30,+0.00] dist=0.62 obs_b=[+0.61,-0.12] est_xy=[-0.03,+0.01] odom=external/fresh(0.07s) track=8/lock=8 dir=away par=-0.35 perp=+0.24
+  [DBG-ODOM] raw=[-0.54,-0.15] origin=[-0.51,-0.16] disp_w=[-0.03,+0.01] lio_yaw=+0.29 origin_yaw=+0.29 low_yaw=-0.69 msg=129 age=0.07s
+  [DBG-FRAME] samples=2 rot=None map=None det=None rms=None scale=[None,None] last_cmd=[-0.29,+0.29] last_dodom=[-0.011,+0.026] last_pred=None
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[DODGE ] cmd=[-0.30,+0.15,+0.00] target=[-0.30,-0.00,+0.00] dist=0.57 obs_b=[+0.57,+0.01] est_xy=[-0.02,-0.05] odom=external/fresh(0.16s) track=8/lock=8 dir=away par=-0.30 perp=+0.16
+  [DBG-ODOM] raw=[-0.54,-0.20] origin=[-0.51,-0.16] disp_w=[-0.02,-0.05] lio_yaw=+0.32 origin_yaw=+0.29 low_yaw=-0.67 msg=131 age=0.16s
+  [DBG-FRAME] samples=4 rot=[[+0.80,-0.60],[+0.60,+0.80]] map=[[+2.173,+2.154],[+1.634,+1.614]] det=+1.00 rms=0.026 scale=[2.719,2.691] last_cmd=[-0.30,+0.30] last_dodom=[-0.005,-0.012] last_pred=[-0.006,-0.006]
+  [DBG-SAFE] close_escape par -0.294->-0.300 perp +0.306->+0.003
+[DODGE ] cmd=[-0.30,-0.01,+0.00] target=[-0.30,-0.01,+0.00] dist=0.59 obs_b=[+0.59,+0.06] est_xy=[-0.05,-0.15] odom=external/fresh(0.06s) track=8/lock=8 dir=away par=-0.30 perp=+0.01
+  [DBG-ODOM] raw=[-0.56,-0.31] origin=[-0.51,-0.16] disp_w=[-0.05,-0.15] lio_yaw=+0.30 origin_yaw=+0.29 low_yaw=-0.70 msg=134 age=0.06s
+  [DBG-FRAME] samples=7 rot=[[+0.07,-1.00],[+1.00,+0.07]] map=[[+0.013,-0.017],[+0.198,+0.190]] det=+1.00 rms=0.027 scale=[0.198,0.191] last_cmd=[-0.30,-0.01] last_dodom=[-0.004,-0.090] last_pred=[-0.004,-0.061]
+  [DBG-SAFE] close_escape par -0.269->-0.300 perp +0.328->+0.015
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[DODGE ] cmd=[-0.30,+0.15,+0.00] target=[-0.30,-0.00,+0.00] dist=0.93 obs_b=[+0.93,+0.01] est_xy=[-0.07,-0.18] odom=external/fresh(0.16s) track=8/lock=8 dir=away par=-0.30 perp=+0.15
+  [DBG-ODOM] raw=[-0.59,-0.33] origin=[-0.51,-0.16] disp_w=[-0.07,-0.18] lio_yaw=+0.31 origin_yaw=+0.29 low_yaw=-0.80 msg=136 age=0.16s
+  [DBG-FRAME] samples=8 rot=[[+0.14,-0.99],[+0.99,+0.14]] map=[[+0.019,-0.009],[+0.137,+0.127]] det=+1.00 rms=0.029 scale=[0.138,0.127] last_cmd=[-0.30,+0.15] last_dodom=[-0.023,-0.012] last_pred=[-0.007,-0.022]
+  [DBG-SAFE] close_escape par -0.298->-0.300 perp +0.302->+0.001
+[DODGE CLEAR] dist=1.09m; waiting 1.0s before return
+[DODGE ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.37 obs_b=[+1.37,-0.10] est_xy=[-0.19,-0.33] odom=external/fresh(0.07s) track=8/lock=8 dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.70,-0.48] origin=[-0.51,-0.16] disp_w=[-0.19,-0.33] lio_yaw=+0.47 origin_yaw=+0.29 low_yaw=-0.78 msg=139 age=0.07s
+  [DBG-FRAME] samples=8 rot=[[+0.31,-0.95],[+0.95,+0.31]] map=[[+0.047,-0.018],[+0.147,+0.074]] det=+1.00 rms=0.034 scale=[0.154,0.077] last_cmd=[-0.30,+0.00] last_dodom=[-0.044,-0.058] last_pred=[-0.014,-0.044]
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[DODGE ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=1.74 obs_b=[+1.71,-0.31] est_xy=[-0.26,-0.46] odom=external/fresh(0.18s) track=8/lock=8 dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.77,-0.62] origin=[-0.51,-0.16] disp_w=[-0.26,-0.46] lio_yaw=+0.38 origin_yaw=+0.29 low_yaw=-0.83 msg=141 age=0.18s
+  [DBG-FRAME] samples=8 rot=[[+0.31,-0.95],[+0.95,+0.31]] map=[[+0.047,-0.018],[+0.147,+0.074]] det=+1.00 rms=0.034 scale=[0.154,0.077] last_cmd=[-0.30,+0.00] last_dodom=[-0.044,-0.058] last_pred=[-0.014,-0.044]
+[RETURN WAIT] robot still moving after dodge speed=0.000m/s window=0.184m/0.60s avg=0.305m/s stable=0.00/0.60s; holding zero
+[DODGE STOP] dist=2.02m est_disp=0.58m
+[RETURN PROBE] measuring SDK frame with +x 0.30m/s and +y 0.30m/s for 0.80s each after 0.30s settles
+[RETURN START] est_disp=0.58m est_xy=[-0.30,-0.49]
+[RETURN PROBE WAIT] before +x speed=0.000m/s window=0.117m/0.60s avg=0.194m/s stable=0.70/0.60s
+[RETURN] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=2.10 obs_b=[+2.02,-0.59] est_xy=[-0.30,-0.56] odom=external/fresh(0.07s) track=8/lock=8 rmode=geo rframe=none(8) dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.81,-0.71] origin=[-0.51,-0.16] disp_w=[-0.30,-0.56] lio_yaw=+0.43 origin_yaw=+0.29 low_yaw=-0.83 msg=144 age=0.07s
+  [DBG-FRAME] samples=8 rot=[[+0.31,-0.95],[+0.95,+0.31]] map=[[+0.047,-0.018],[+0.147,+0.074]] det=+1.00 rms=0.034 scale=[0.154,0.077] last_cmd=[-0.30,+0.00] last_dodom=[-0.044,-0.058] last_pred=[-0.014,-0.044]
+  [DBG-RETURN] frame=odom_yaw disp_w=[-0.30,-0.56] disp_b=None back_w=[+0.30,+0.56] cmd_odom=[+0.00,+0.00] target_odom=[+0.00,+0.00] prog_dot=+0.000 prog_cos=+0.00 dodom_w=[+0.000,-0.064] actual_dot=-0.032 actual_cos=-0.85 head_cmd=None final_target=[+0.00,+0.00,+0.00]
+[RETURN PROBE] settled; probing +x
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[RETURN] cmd=[+0.30,+0.00,+0.00] target=[+0.30,+0.00,+0.00] dist=2.33 obs_b=[+2.13,-0.94] est_xy=[-0.32,-0.63] odom=external/fresh(0.18s) track=8/lock=8 rmode=geo rframe=none(8) dir=toward par=+0.27 perp=+0.12
+  [DBG-ODOM] raw=[-0.84,-0.79] origin=[-0.51,-0.16] disp_w=[-0.32,-0.63] lio_yaw=+0.47 origin_yaw=+0.29 low_yaw=-0.82 msg=146 age=0.18s
+  [DBG-FRAME] samples=8 rot=[[+0.31,-0.95],[+0.95,+0.31]] map=[[+0.047,-0.018],[+0.147,+0.074]] det=+1.00 rms=0.034 scale=[0.154,0.077] last_cmd=[-0.30,+0.00] last_dodom=[-0.044,-0.058] last_pred=[-0.014,-0.044]
+  [DBG-RETURN] frame=odom_yaw disp_w=[-0.32,-0.63] disp_b=None back_w=[+0.32,+0.63] cmd_odom=[+0.27,+0.13] target_odom=[+0.27,+0.13] prog_dot=+0.172 prog_cos=+0.81 dodom_w=[+0.000,+0.000] actual_dot=+0.000 actual_cos=+0.00 head_cmd=None final_target=[+0.30,+0.00,+0.00]
+[RETURN PROBE] +x delta_w=[-0.062,-0.158]
+[RETURN PROBE WAIT] before +y speed=0.285m/s window=0.120m/0.60s avg=0.200m/s stable=0.00/0.60s
+[RETURN] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=2.50 obs_b=[+2.20,-1.20] est_xy=[-0.37,-0.74] odom=external/fresh(0.07s) track=-1/lock=8 rmode=geo rframe=none(8) dir=lateral par=+0.00 perp=+0.00
+  [DBG-ODOM] raw=[-0.88,-0.90] origin=[-0.51,-0.16] disp_w=[-0.37,-0.74] lio_yaw=+0.42 origin_yaw=+0.29 low_yaw=-0.77 msg=149 age=0.07s
+  [DBG-FRAME] samples=8 rot=[[+0.31,-0.95],[+0.95,+0.31]] map=[[+0.047,-0.018],[+0.147,+0.074]] det=+1.00 rms=0.034 scale=[0.154,0.077] last_cmd=[-0.30,+0.00] last_dodom=[-0.044,-0.058] last_pred=[-0.014,-0.044]
+  [DBG-RETURN] frame=odom_yaw disp_w=[-0.37,-0.74] disp_b=None back_w=[+0.37,+0.74] cmd_odom=[+0.00,+0.00] target_odom=[+0.00,+0.00] prog_dot=+0.000 prog_cos=+0.00 dodom_w=[-0.009,-0.027] actual_dot=-0.023 actual_cos=-0.99 head_cmd=None final_target=[+0.00,+0.00,+0.00]
+[RETURN PROBE] settled; probing +y
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[RETURN] cmd=[+0.00,+0.30,+0.00] target=[+0.00,+0.30,+0.00] dist=2.80 obs_b=[+2.30,-1.60] est_xy=[-0.37,-0.77] odom=external/fresh(0.18s) track=-1/lock=8 rmode=geo rframe=none(8) dir=away par=-0.17 perp=+0.25
+  [DBG-ODOM] raw=[-0.88,-0.92] origin=[-0.51,-0.16] disp_w=[-0.37,-0.77] lio_yaw=+0.42 origin_yaw=+0.29 low_yaw=-0.72 msg=151 age=0.18s
+  [DBG-FRAME] samples=8 rot=[[+0.31,-0.95],[+0.95,+0.31]] map=[[+0.047,-0.018],[+0.147,+0.074]] det=+1.00 rms=0.034 scale=[0.154,0.077] last_cmd=[-0.30,+0.00] last_dodom=[-0.044,-0.058] last_pred=[-0.014,-0.044]
+  [DBG-RETURN] frame=odom_yaw disp_w=[-0.37,-0.77] disp_b=None back_w=[+0.37,+0.77] cmd_odom=[-0.12,+0.27] target_odom=[-0.12,+0.27] prog_dot=+0.165 prog_cos=+0.65 dodom_w=[+0.000,+0.000] actual_dot=+0.000 actual_cos=+0.00 head_cmd=None final_target=[+0.00,+0.30,+0.00]
+[RETURN PROBE] +y delta_w=[+0.031,-0.054]
+[RETURN FRAME] geo calibrated SDK/world frame rot=[[-0.367,+0.930],[-0.930,-0.367]] dx=0.170m dy=0.062m orth=0.048m axis_cos=+0.63 det=+1.00
+[RETURN] cmd=[-0.15,+0.15,+0.00] target=[-0.25,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.34,-0.78] odom=external/fresh(0.04s) track=-1/lock=8 rmode=geo rframe=online_frozen(8) disp_b=[+0.85,-0.03]
+  [DBG-ODOM] raw=[-0.86,-0.94] origin=[-0.51,-0.16] disp_w=[-0.34,-0.78] lio_yaw=+0.35 origin_yaw=+0.29 low_yaw=-0.71 msg=154 age=0.04s
+  [DBG-FRAME] samples=8 rot=[[-0.37,+0.93],[-0.93,-0.37]] map=[[+0.047,-0.018],[+0.147,+0.074]] det=+1.00 rms=0.034 scale=[0.154,0.077] last_cmd=[-0.30,+0.00] last_dodom=[-0.044,-0.058] last_pred=[-0.014,-0.044]
+  [DBG-RETURN] frame=online_frozen disp_w=[-0.34,-0.78] disp_b=[+0.85,-0.03] back_w=[+0.34,+0.78] cmd_odom=[+0.19,+0.08] target_odom=[+0.09,+0.23] prog_dot=+0.133 prog_cos=+0.73 dodom_w=[+0.003,+0.005] actual_dot=+0.005 actual_cos=+0.99 head_cmd=None final_target=[-0.25,+0.00,+0.00]
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[RETURN] cmd=[-0.25,+0.00,+0.00] target=[-0.25,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.31,-0.87] odom=external/fresh(0.19s) track=-1/lock=8 rmode=geo rframe=online_frozen(8) disp_b=[+0.92,+0.03]
+  [DBG-ODOM] raw=[-0.82,-1.03] origin=[-0.51,-0.16] disp_w=[-0.31,-0.87] lio_yaw=+0.33 origin_yaw=+0.29 low_yaw=-0.72 msg=156 age=0.19s
+  [DBG-FRAME] samples=8 rot=[[-0.37,+0.93],[-0.93,-0.37]] map=[[+0.047,-0.018],[+0.147,+0.074]] det=+1.00 rms=0.034 scale=[0.154,0.077] last_cmd=[-0.30,+0.00] last_dodom=[-0.044,-0.058] last_pred=[-0.014,-0.044]
+  [DBG-RETURN] frame=online_frozen disp_w=[-0.31,-0.87] disp_b=[+0.92,+0.03] back_w=[+0.31,+0.87] cmd_odom=[+0.09,+0.23] target_odom=[+0.09,+0.23] prog_dot=+0.231 prog_cos=+1.00 dodom_w=[+0.000,+0.000] actual_dot=+0.000 actual_cos=+0.00 head_cmd=None final_target=[-0.25,+0.00,+0.00]
+[RETURN ABORT] moving away from origin 3x actual_dot=-0.047 actual_cos=-0.88; zeroing
+[TARGET LOCK] cleared track_id=8 (return bad progress)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.30,-1.00] odom=external/fresh(0.09s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.82,-1.16] origin=[-0.51,-0.16] disp_w=[-0.30,-1.00] lio_yaw=+0.35 origin_yaw=+0.29 low_yaw=-0.71 msg=159 age=0.09s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.36,-1.05] odom=external/fresh(0.18s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.87,-1.20] origin=[-0.51,-0.16] disp_w=[-0.36,-1.05] lio_yaw=+0.31 origin_yaw=+0.29 low_yaw=-0.75 msg=161 age=0.18s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.40,-1.16] odom=external/fresh(0.08s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.91,-1.31] origin=[-0.51,-0.16] disp_w=[-0.40,-1.16] lio_yaw=+0.37 origin_yaw=+0.29 low_yaw=-0.74 msg=164 age=0.08s
+[EMERGENCY] L2+B detected, keep holding for 2.0s to enter damping
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.39,-1.23] odom=external/fresh(0.19s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.90,-1.38] origin=[-0.51,-0.16] disp_w=[-0.39,-1.23] lio_yaw=+0.37 origin_yaw=+0.29 low_yaw=-0.73 msg=166 age=0.19s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.39,-1.29] odom=external/fresh(0.09s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.91,-1.45] origin=[-0.51,-0.16] disp_w=[-0.39,-1.29] lio_yaw=+0.36 origin_yaw=+0.29 low_yaw=-0.70 msg=169 age=0.09s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.39,-1.32] odom=external/fresh(0.20s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.91,-1.48] origin=[-0.51,-0.16] disp_w=[-0.39,-1.32] lio_yaw=+0.34 origin_yaw=+0.29 low_yaw=-0.72 msg=171 age=0.20s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.40,-1.40] odom=external/fresh(0.10s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.91,-1.56] origin=[-0.51,-0.16] disp_w=[-0.40,-1.40] lio_yaw=+0.34 origin_yaw=+0.29 low_yaw=-0.71 msg=174 age=0.10s
+[EMERGENCY] L2+B detected, keep holding for 2.0s to enter damping
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.43,-1.42] odom=external/fresh(0.01s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.94,-1.57] origin=[-0.51,-0.16] disp_w=[-0.43,-1.42] lio_yaw=+0.34 origin_yaw=+0.29 low_yaw=-0.73 msg=177 age=0.01s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.43,-1.38] odom=external/fresh(0.10s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.95,-1.54] origin=[-0.51,-0.16] disp_w=[-0.43,-1.38] lio_yaw=+0.35 origin_yaw=+0.29 low_yaw=-0.75 msg=179 age=0.10s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.41,-1.43] odom=external/fresh(0.21s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.92,-1.58] origin=[-0.51,-0.16] disp_w=[-0.41,-1.43] lio_yaw=+0.38 origin_yaw=+0.29 low_yaw=-0.77 msg=181 age=0.21s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.41,-1.45] odom=external/fresh(0.10s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.93,-1.61] origin=[-0.51,-0.16] disp_w=[-0.41,-1.45] lio_yaw=+0.40 origin_yaw=+0.29 low_yaw=-0.79 msg=184 age=0.10s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.45,-1.44] odom=external/fresh(0.20s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.96,-1.59] origin=[-0.51,-0.16] disp_w=[-0.45,-1.44] lio_yaw=+0.41 origin_yaw=+0.29 low_yaw=-0.79 msg=186 age=0.20s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.43,-1.44] odom=external/fresh(0.08s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.94,-1.59] origin=[-0.51,-0.16] disp_w=[-0.43,-1.44] lio_yaw=+0.39 origin_yaw=+0.29 low_yaw=-0.80 msg=189 age=0.08s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.42,-1.49] odom=external/fresh(0.01s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.93,-1.64] origin=[-0.51,-0.16] disp_w=[-0.42,-1.49] lio_yaw=+0.42 origin_yaw=+0.29 low_yaw=-0.78 msg=192 age=0.01s
+/home/zz4723/g1-rl-demo/.venv/lib/python3.8/site-packages/torch/nn/modules/transformer.py:306: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(f"enable_nested_tensor is True, but self.use_nested_tensor is False because {why_not_sparsity_fast_path}")
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.42,-1.51] odom=external/fresh(0.11s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.94,-1.66] origin=[-0.51,-0.16] disp_w=[-0.42,-1.51] lio_yaw=+0.42 origin_yaw=+0.29 low_yaw=-0.80 msg=194 age=0.11s
+[EMERGENCY] L2+B detected, keep holding for 2.0s to enter damping
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.43,-1.50] odom=external/fresh(0.01s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.94,-1.66] origin=[-0.51,-0.16] disp_w=[-0.43,-1.50] lio_yaw=+0.41 origin_yaw=+0.29 low_yaw=-0.86 msg=197 age=0.01s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.43,-1.51] odom=external/fresh(0.12s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.95,-1.67] origin=[-0.51,-0.16] disp_w=[-0.43,-1.51] lio_yaw=+0.47 origin_yaw=+0.29 low_yaw=-0.84 msg=199 age=0.12s
+[DBG-LOCO] SetVelocity code=0 fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.43,-1.49] odom=external/fresh(0.01s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.95,-1.64] origin=[-0.51,-0.16] disp_w=[-0.43,-1.49] lio_yaw=+0.49 origin_yaw=+0.29 low_yaw=-0.84 msg=202 age=0.01s
+[READY ] cmd=[+0.00,+0.00,+0.00] target=[+0.00,+0.00,+0.00] dist=N/A obs_b=None est_xy=[-0.48,-1.48] odom=external/fresh(0.10s) track=-1/lock=None
+  [DBG-ODOM] raw=[-0.99,-1.64] origin=[-0.51,-0.16] disp_w=[-0.48,-1.48] lio_yaw=+0.47 origin_yaw=+0.29 low_yaw=-0.85 msg=204 age=0.10s
+[EMERGENCY] L2+B hold reached; sending zero velocity + Damp()
+[EXIT] zero velocity + StopMove

@@ -37,6 +37,8 @@ def main():
                             "rgbd_publisher_robot.py")))
     parser.add_argument("--remote-script", default="/tmp/rgbd_publisher.py")
     parser.add_argument("--remote-launch", default="/tmp/launch_rgbd.sh")
+    parser.add_argument("--keep-videohub", action="store_true",
+                        help="Do not kill Unitree video_hub_pc4 before starting RGBD.")
     args = parser.parse_args()
 
     local_script = pathlib.Path(args.local_script).resolve()
@@ -59,6 +61,11 @@ def main():
              "pkill -f 'rgbd_publisher_robot.py' || true; "
              "pkill -f '/tmp/launch_rgbd.sh' || true; "
              "sleep 1")
+    if not args.keep_videohub:
+        run(ssh, "set +e; "
+                 "pkill -f 'video_hub_pc4' || true; "
+                 "pkill -f 'master_service__video_hub_pc4' || true; "
+                 "sleep 2")
 
     print(f"[rgbd] upload {local_script} -> {args.remote_script}")
     sftp = ssh.open_sftp()

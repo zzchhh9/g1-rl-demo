@@ -6,7 +6,8 @@ Pairs with `rgbd_publisher_robot.py`.
 Output DDS topic format (`rt/yolo/person`, std_msgs::String_, JSON payload):
     {"frame_id": int, "ts_ms": int, "n": 0 or 1,
      "x_fwd": m, "y_left": m, "z": m, "dist": m, "bearing": deg,
-     "track_id": int, "conf": float}
+     "track_id": int, "conf": float,
+     "track_locked": bool, "locked_track_id": int or null}
 
   - `n=0` means no person detected this frame (deploy_dodge_real.py should
     treat as "no obstacle").
@@ -58,11 +59,25 @@ def main():
                    help="Subtract this many meters from raw RealSense depth.")
     p.add_argument("--depth-floor", type=float, default=0.05,
                    help="Minimum reported distance after offset (clamp).")
+    p.add_argument("--min-depth-pixels", type=int, default=10,
+                   help="Minimum valid depth pixels inside a person box.")
+    p.add_argument("--hold-last-detect", type=float, default=0.75,
+                   help="Republish the last selected person for this many seconds "
+                        "when YOLO/depth briefly drops out. Set 0 to disable.")
     p.add_argument("--save-npy", type=str, default="",
                    help="Save complete YOLO trajectory to .npy (rows: "
                         "t_sec, x_fwd, y_left, z, dist, bearing, track_id). "
                         "Rows skipped when no detection. Compatible with "
                         "deploy_dodge_mujoco.py --replay_yolo.")
+    p.add_argument("--lock-first-track", action="store_true",
+                   help="Once ByteTrack produces a valid person track_id, publish "
+                        "only that first track. Other people are ignored until "
+                        "this process is restarted.")
+    p.add_argument("--lock-first-track-dist", type=float, default=0.0,
+                   help="If >0, --lock-first-track only locks a candidate once "
+                        "its depth distance is at or below this threshold.")
+    p.add_argument("--lock-track-id", type=int, default=None,
+                   help="Publish only this specific ByteTrack person track_id.")
     args = p.parse_args()
 
     print(f"[dds] init domain 0 on {args.net}")
@@ -84,6 +99,13 @@ def main():
 
     annotated_frames = [] if args.record_video else None   # list of (frame_bgr, t_sec)
     traj_rows = [] if args.save_npy else None
+    locked_tid = (int(args.lock_track_id)
+                  if args.lock_track_id is not None and int(args.lock_track_id) >= 0
+                  else None)
+    if locked_tid is not None:
+        print(f"[track] publishing locked track_id={locked_tid}")
+    last_payload = None
+    last_detect_t = 0.0
 
     n_frames = 0
     n_detect = 0
@@ -106,23 +128,47 @@ def main():
                                   persist=True, tracker="bytetrack.yaml")
             boxes = results[0].boxes
 
-            nearest = None
+            candidates = []
+            raw_box_n = len(boxes) if boxes is not None else 0
+            depth_reject_n = 0
             for b in boxes:
                 x1, y1, x2, y2 = [int(v) for v in b.xyxy[0].tolist()]
                 roi = depth[y1:y2, x1:x2]
                 valid = roi[(roi > 0) & (roi < 8000)]
-                if len(valid) < 20:
+                if len(valid) < args.min_depth_pixels:
+                    depth_reject_n += 1
                     continue
                 d_m_raw = float(np.median(valid)) / 1000.0
                 d_m = max(args.depth_floor, d_m_raw - args.depth_offset)
-                if (nearest is None) or (d_m < nearest["d"]):
-                    cx_b = (x1 + x2) / 2
-                    bearing = math.degrees(math.atan2(cx_b - cx_px, fx))
-                    tid = int(b.id.item()) if b.id is not None else -1
-                    nearest = dict(d=d_m, d_raw=d_m_raw, bearing=bearing, tid=tid,
-                                   conf=float(b.conf.item()),
-                                   x1=x1, y1=y1, x2=x2, y2=y2)
+                cx_b = (x1 + x2) / 2
+                bearing = math.degrees(math.atan2(cx_b - cx_px, fx))
+                tid = int(b.id.item()) if b.id is not None else -1
+                candidates.append(dict(d=d_m, d_raw=d_m_raw, bearing=bearing,
+                                       tid=tid, conf=float(b.conf.item()),
+                                       x1=x1, y1=y1, x2=x2, y2=y2))
 
+            nearest = min(candidates, key=lambda c: c["d"], default=None)
+            selected = nearest
+            ignored_n = 0
+            if args.lock_first_track or locked_tid is not None:
+                if locked_tid is None:
+                    lockable = [c for c in candidates
+                                if c["tid"] >= 0
+                                and (args.lock_first_track_dist <= 0.0
+                                     or c["d"] <= args.lock_first_track_dist)]
+                    if lockable:
+                        seed = min(lockable, key=lambda c: c["d"])
+                        locked_tid = int(seed["tid"])
+                        print(f"[track] locked first track_id={locked_tid} "
+                              f"d={seed['d']:.2f}m", flush=True)
+                if locked_tid is not None:
+                    matches = [c for c in candidates if c["tid"] == locked_tid]
+                    selected = min(matches, key=lambda c: c["d"], default=None)
+                    ignored_n = sum(1 for c in candidates if c["tid"] != locked_tid)
+
+            nearest = selected
+
+            held_payload = False
             if nearest:
                 rad = math.radians(nearest["bearing"])
                 payload = {
@@ -132,15 +178,49 @@ def main():
                     "z": 0.85,
                     "dist": nearest["d"], "bearing": nearest["bearing"],
                     "track_id": nearest["tid"], "conf": nearest["conf"],
+                    "track_locked": locked_tid is not None,
+                    "locked_track_id": locked_tid,
+                    "candidate_n": len(candidates),
+                    "ignored_n": ignored_n,
+                    "raw_box_n": raw_box_n,
+                    "depth_reject_n": depth_reject_n,
+                    "held": False,
+                    "held_age": 0.0,
                 }
+                last_payload = dict(payload)
+                last_detect_t = time.time()
                 n_detect += 1
                 if traj_rows is not None:
                     t_sec = time.time() - t_loop
                     traj_rows.append([t_sec, payload["x_fwd"], payload["y_left"],
                                       payload["z"], nearest["d"], nearest["bearing"],
                                       nearest["tid"]])
+            elif (args.hold_last_detect > 0.0 and last_payload is not None
+                  and (time.time() - last_detect_t) <= args.hold_last_detect):
+                payload = dict(last_payload)
+                payload.update({
+                    "frame_id": frame_id,
+                    "ts_ms": ts_ms,
+                    "candidate_n": len(candidates),
+                    "ignored_n": ignored_n,
+                    "raw_box_n": raw_box_n,
+                    "depth_reject_n": depth_reject_n,
+                    "held": True,
+                    "held_age": time.time() - last_detect_t,
+                })
+                held_payload = True
             else:
-                payload = {"frame_id": frame_id, "ts_ms": ts_ms, "n": 0}
+                payload = {
+                    "frame_id": frame_id, "ts_ms": ts_ms, "n": 0,
+                    "track_locked": locked_tid is not None,
+                    "locked_track_id": locked_tid,
+                    "candidate_n": len(candidates),
+                    "ignored_n": ignored_n,
+                    "raw_box_n": raw_box_n,
+                    "depth_reject_n": depth_reject_n,
+                    "held": False,
+                    "held_age": None,
+                }
 
             msg.data = json.dumps(payload)
             pub.Write(msg)
@@ -187,11 +267,19 @@ def main():
                 det_pct = 100 * n_detect / n_frames
                 if nearest:
                     print(f"  f{frame_id:5d}  yolo={yolo_ms:.0f}ms  fps={fps:.1f}  "
-                          f"det={det_pct:.0f}%  | nearest d={nearest['d']:.2f}m "
+                          f"det={det_pct:.0f}%  | selected d={nearest['d']:.2f}m "
                           f"bear={nearest['bearing']:+.1f}° id{nearest['tid']}", flush=True)
+                elif held_payload:
+                    print(f"  f{frame_id:5d}  yolo={yolo_ms:.0f}ms  fps={fps:.1f}  "
+                          f"det={det_pct:.0f}%  | held d={payload['dist']:.2f}m "
+                          f"bear={payload['bearing']:+.1f}° id{payload['track_id']} "
+                          f"age={payload['held_age']:.2f}s "
+                          f"boxes={raw_box_n} depth_rej={depth_reject_n}", flush=True)
                 else:
                     print(f"  f{frame_id:5d}  yolo={yolo_ms:.0f}ms  fps={fps:.1f}  "
-                          f"det={det_pct:.0f}%  | (no detection)", flush=True)
+                          f"det={det_pct:.0f}%  | (no selected detection) "
+                          f"boxes={raw_box_n} cand={len(candidates)} "
+                          f"depth_rej={depth_reject_n} locked_id={locked_tid}", flush=True)
     except KeyboardInterrupt:
         print("\n[stop] interrupted")
     except ConnectionResetError as e:

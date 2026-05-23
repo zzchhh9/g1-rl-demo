@@ -1,0 +1,198 @@
+usage: deploy_dodge_sdk_loco.py [-h] [--source {yolo}]
+                                [--startup_mode {keep,ai}] [--wait_for_a]
+                                [--no_loco_start]
+                                [--loco_start_wait LOCO_START_WAIT]
+                                [--balance_mode BALANCE_MODE]
+                                [--require_loco_ready]
+                                [--no_require_loco_ready] [--max_vel MAX_VEL]
+                                [--max_ang_vel MAX_ANG_VEL]
+                                [--safety_dist SAFETY_DIST]
+                                [--clear_margin CLEAR_MARGIN]
+                                [--cmd_hz CMD_HZ]
+                                [--cmd_duration CMD_DURATION]
+                                [--max_accel_lin MAX_ACCEL_LIN]
+                                [--max_accel_ang MAX_ACCEL_ANG]
+                                [--min_loco_lin_vel MIN_LOCO_LIN_VEL]
+                                [--close_escape_speed CLOSE_ESCAPE_SPEED]
+                                [--return_enable] [--no_return]
+                                [--return_mode {geo,head,p}]
+                                [--return_head_ckpt RETURN_HEAD_CKPT]
+                                [--return_max_vel RETURN_MAX_VEL]
+                                [--return_min_vel RETURN_MIN_VEL]
+                                [--return_gain RETURN_GAIN]
+                                [--return_lat_gain RETURN_LAT_GAIN]
+                                [--return_done_dist RETURN_DONE_DIST]
+                                [--return_timeout RETURN_TIMEOUT]
+                                [--return_no_progress_timeout RETURN_NO_PROGRESS_TIMEOUT]
+                                [--return_clear_delay RETURN_CLEAR_DELAY]
+                                [--return_lateral_sign RETURN_LATERAL_SIGN]
+                                [--return_max_lat_vel RETURN_MAX_LAT_VEL]
+                                [--return_odom_source {cmd,external,auto}]
+                                [--odom_topic ODOM_TOPIC]
+                                [--odom_staleness ODOM_STALENESS]
+                                [--odom_startup_timeout ODOM_STARTUP_TIMEOUT]
+                                [--odom_startup_min_count ODOM_STARTUP_MIN_COUNT]
+                                [--odom_startup_stable_s ODOM_STARTUP_STABLE_S]
+                                [--return_odom_scale RETURN_ODOM_SCALE]
+                                [--return_map_window RETURN_MAP_WINDOW]
+                                [--return_map_min_samples RETURN_MAP_MIN_SAMPLES]
+                                [--no_return_require_online_frame]
+                                [--no_return_freeze_frame]
+                                [--no_return_head_guard]
+                                [--dodge_ewma_alpha DODGE_EWMA_ALPHA]
+                                [--yolo_staleness YOLO_STALENESS]
+                                [--yolo_hold_timeout YOLO_HOLD_TIMEOUT]
+                                [--yolo_no_kalman]
+                                [--yolo_kf_meas_std YOLO_KF_MEAS_STD]
+                                [--yolo_kf_meas_std_close YOLO_KF_MEAS_STD_CLOSE]
+                                [--yolo_kf_gate YOLO_KF_GATE]
+                                [--lock_first_yolo_track]
+                                [--no_lock_first_yolo_track] [--debug_obs]
+                                [--debug_every DEBUG_EVERY]
+                                [--l2b_damp_hold L2B_DAMP_HOLD]
+                                net
+
+positional arguments:
+  net                   Network interface, e.g. eno1
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --source {yolo}
+  --startup_mode {keep,ai}
+                        keep current built-in mode, or select 'ai'. Never
+                        releases low-level.
+  --wait_for_a          Wait for remote A before enabling. Default enables
+                        immediately to avoid the built-in high-level mode
+                        consuming A.
+  --no_loco_start       Do not call LocoClient.Start() on enable.
+  --loco_start_wait LOCO_START_WAIT
+                        Seconds to wait after LocoClient.Start() before
+                        velocity commands.
+  --balance_mode BALANCE_MODE
+                        Call LocoClient.SetBalanceMode(value) after Start. On
+                        this G1, balance=1 is the stable blue walking mode;
+                        balance=0 has produced unstable in-place stepping.
+                        Pass -1 to leave unchanged.
+  --require_loco_ready  Wait for fsm=200, mode=1 and requested balance before
+                        dodge.
+  --no_require_loco_ready
+                        Do not wait for locomotion mode/balance readiness.
+  --max_vel MAX_VEL     Per-axis high-level velocity cap in m/s.
+  --max_ang_vel MAX_ANG_VEL
+                        Yaw-rate cap rad/s. Default 0 keeps camera pointed at
+                        the person.
+  --safety_dist SAFETY_DIST
+  --clear_margin CLEAR_MARGIN
+                        Stop dodge after obstacle distance exceeds safety_dist
+                        + margin.
+  --cmd_hz CMD_HZ       High-level SetVelocity refresh rate.
+  --cmd_duration CMD_DURATION
+                        SetVelocity duration. Short duration prevents runaway
+                        if script dies.
+  --max_accel_lin MAX_ACCEL_LIN
+                        Linear command slew limit in m/s^2.
+  --max_accel_ang MAX_ACCEL_ANG
+                        Angular command slew limit in rad/s^2.
+  --min_loco_lin_vel MIN_LOCO_LIN_VEL
+                        Raise nonzero dodge command norm above this value if
+                        cap allows it.
+  --close_escape_speed CLOSE_ESCAPE_SPEED
+                        Minimum radial away speed near the obstacle. Default
+                        uses the largest feasible radial speed under max_vel.
+  --return_enable       After dodge clears, estimate displacement from sent
+                        SDK velocity commands and walk back toward the start
+                        pose.
+  --no_return           Disable post-dodge return.
+  --return_mode {geo,head,p}
+                        'geo' uses SLAM displacement plus live LIO yaw to
+                        command directly toward the dodge origin. 'head' uses
+                        checkpoints/return_head_v23b_v6.pt for debugging. 'p'
+                        keeps the old hand-written P controller.
+  --return_head_ckpt RETURN_HEAD_CKPT
+                        Checkpoint for the trained return head.
+  --return_max_vel RETURN_MAX_VEL
+                        Per-axis cap for post-dodge return velocity.
+  --return_min_vel RETURN_MIN_VEL
+                        Minimum return command norm while estimated
+                        displacement is still above --return_done_dist.
+  --return_gain RETURN_GAIN
+                        P gain from estimated displacement to return velocity.
+  --return_lat_gain RETURN_LAT_GAIN
+                        P gain for lateral return correction. Keep lower than
+                        --return_gain because SDK lateral tracking is less
+                        stable.
+  --return_done_dist RETURN_DONE_DIST
+                        Estimated displacement below this is considered
+                        returned.
+  --return_timeout RETURN_TIMEOUT
+                        Maximum seconds spent in one RETURN phase.
+  --return_no_progress_timeout RETURN_NO_PROGRESS_TIMEOUT
+                        Abort RETURN if real LIO displacement does not make
+                        positive progress toward the origin for this many
+                        seconds.
+  --return_clear_delay RETURN_CLEAR_DELAY
+                        Obstacle must stay clear/missing this long before
+                        RETURN starts.
+  --return_lateral_sign RETURN_LATERAL_SIGN
+                        Sign applied to external-odom return lateral command
+                        after rotating odom displacement into body frame.
+  --return_max_lat_vel RETURN_MAX_LAT_VEL
+                        Per-axis cap for lateral return velocity. Lower values
+                        avoid sideways overshoot during recovery.
+  --return_odom_source {cmd,external,auto}
+                        'cmd' integrates sent SDK velocity. 'external' uses
+                        DDS odom from --odom_topic and fails closed if
+                        unavailable. 'auto' uses external only if it is fresh
+                        when dodge is enabled.
+  --odom_topic ODOM_TOPIC
+                        DDS std_msgs/String JSON odometry topic.
+  --odom_staleness ODOM_STALENESS
+                        Maximum DDS odom age before return is paused.
+  --odom_startup_timeout ODOM_STARTUP_TIMEOUT
+                        Seconds to wait for sustained fresh external odom
+                        before locomotion is allowed to start.
+  --odom_startup_min_count ODOM_STARTUP_MIN_COUNT
+                        Minimum fresh odom messages required at startup before
+                        locomotion is allowed to start.
+  --odom_startup_stable_s ODOM_STARTUP_STABLE_S
+                        Minimum continuous fresh-odom span required at startup
+                        before locomotion is allowed to start.
+  --return_odom_scale RETURN_ODOM_SCALE
+                        Scale factor for integrating sent SDK velocity as
+                        rough odometry.
+  --return_map_window RETURN_MAP_WINDOW
+                        Recent SDK-command/odom-delta samples used only for
+                        online frame diagnostics and non-geo return modes.
+  --return_map_min_samples RETURN_MAP_MIN_SAMPLES
+                        Minimum online frame samples for diagnostics/non-geo
+                        frame use.
+  --no_return_require_online_frame
+                        Allow non-geo learned-frame RETURN to fall back to yaw
+                        if the online SDK-command/SLAM frame is unavailable.
+                        Geo mode always uses LIO yaw directly.
+  --no_return_freeze_frame
+                        Do not freeze the learned command/odom frame during
+                        RETURN.
+  --no_return_head_guard
+                        Do not enforce forward progress and lateral cap on
+                        return head output.
+  --dodge_ewma_alpha DODGE_EWMA_ALPHA
+  --yolo_staleness YOLO_STALENESS
+  --yolo_hold_timeout YOLO_HOLD_TIMEOUT
+  --yolo_no_kalman
+  --yolo_kf_meas_std YOLO_KF_MEAS_STD
+  --yolo_kf_meas_std_close YOLO_KF_MEAS_STD_CLOSE
+  --yolo_kf_gate YOLO_KF_GATE
+  --lock_first_yolo_track
+                        Lock to the YOLO/ByteTrack track_id that starts the
+                        first DODGE. Later track_id changes are ignored.
+  --no_lock_first_yolo_track
+                        Allow YOLO target switching to the currently published
+                        person.
+  --debug_obs
+  --debug_every DEBUG_EVERY
+  --l2b_damp_hold L2B_DAMP_HOLD
+                        Software damping shortcut: while this script is
+                        running, holding remote L2+B for this many seconds
+                        sends zero velocity then LocoClient.Damp() and exits.
+                        Pass 0 to disable.

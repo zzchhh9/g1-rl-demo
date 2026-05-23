@@ -96,6 +96,8 @@ cloud directly from the robot via UDP. See:
   works, the wire protocol, and the data path on the G1.
 - [`docs/lidar_nearest_obstacle.md`](docs/lidar_nearest_obstacle.md) — using the
   point cloud to measure the nearest obstacle in real time.
+- [`docs/mid360_lio_recover.md`](docs/mid360_lio_recover.md) — using MID-360
+  LiDAR odometry for SDK dodge return-to-start.
 
 Quick start (after the robot is on the same Ethernet at `192.168.123.x`):
 
@@ -118,3 +120,17 @@ high-level locomotion mode through `LocoClient.SetVelocity`, not the low-level
 `motion.pt` controller. See
 [`docs/g1_sdk_loco_dodge_runbook.md`](docs/g1_sdk_loco_dodge_runbook.md) for
 the exact camera, YOLO, SDK dodge, return, and emergency-stop workflow.
+
+Shortest current path:
+
+```bash
+./start_yolo_lidar.sh
+uv run python scripts/dds_odom_echo.py eno1 --topic rt/dodge/odom --duration 10
+
+# Put G1 in blue locomotion mode with the remote, then:
+./deploy.sh
+```
+
+`./start_yolo_lidar.sh` starts camera, YOLO, MID-360 ROS2 driver, robot-side
+LIO, and the DDS odometry bridge. `./deploy.sh` uses external MID-360 odometry
+for return by default.

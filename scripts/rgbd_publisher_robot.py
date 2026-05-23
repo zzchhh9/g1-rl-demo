@@ -31,25 +31,32 @@ RGB_W = int(_os.environ.get("RGBD_W", "640"))
 RGB_H = int(_os.environ.get("RGBD_H", "480"))
 
 pipe = rs.pipeline()
-cfg = rs.config()
 # 15fps to fit USB 2.0 bandwidth (USB 3.0 supports 30fps). Try 30 first, fall
-# back to 15 then 6 if "Couldn't resolve requests".
+# back to 15 then 6 if either stream config or warmup frames fail.
 profile = None
+align = None
 for fps in (30, 15, 6):
     try:
         cfg2 = rs.config()
         cfg2.enable_stream(rs.stream.color, RGB_W, RGB_H, rs.format.bgr8, fps)
         cfg2.enable_stream(rs.stream.depth, RGB_W, RGB_H, rs.format.z16, fps)
         profile = pipe.start(cfg2)
+        align = rs.align(rs.stream.color)
+        for _ in range(10):          # warmup auto-exposure
+            pipe.wait_for_frames(timeout_ms=5000)
         print(f"[rs] using fps={fps}", flush=True)
         break
     except RuntimeError as e:
         print(f"[rs] fps={fps} failed ({e}), trying lower", flush=True)
-if profile is None:
+        try:
+            pipe.stop()
+        except Exception:
+            pass
+        profile = None
+        align = None
+        time.sleep(1.0)
+if profile is None or align is None:
     raise SystemExit("[rs] no fps worked")
-align = rs.align(rs.stream.color)
-for _ in range(10):                  # warmup auto-exposure
-    pipe.wait_for_frames()
 
 intr = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
 depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()

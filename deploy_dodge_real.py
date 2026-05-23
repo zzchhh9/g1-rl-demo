@@ -334,7 +334,9 @@ class YoloDdsObstacleDetector:
                  kf_process_vel_std: float = 0.4,
                  kf_meas_std: float = 0.10,
                  kf_meas_std_close: float = 0.30,
-                 kf_gate_sigma: float = 4.0):
+                 kf_gate_sigma: float = 4.0,
+                 lock_first_track: bool = False,
+                 lock_track_id: int | None = None):
         from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -368,6 +370,11 @@ class YoloDdsObstacleDetector:
         self._kf_n_held = 0             # ticks we returned predict-only state
         self._debug = {"status": "none"}
         self._last_nis: float | None = None
+        self._lock_first_track = bool(lock_first_track)
+        self._locked_track_id = (int(lock_track_id)
+                                 if lock_track_id is not None and int(lock_track_id) >= 0
+                                 else None)
+        self._ignored_track_count = 0
 
         self.subscriber = ChannelSubscriber(topic, String_)
         self.subscriber.Init(self._callback, 10)
@@ -376,6 +383,8 @@ class YoloDdsObstacleDetector:
                   if use_kalman else "KF=OFF (raw passthrough)")
         print(f"[YOLO-DDS] subscribing to {topic}, stale>{staleness_threshold}s ⇒ no-detect")
         print(f"[YOLO-DDS] {kf_str}")
+        if self._locked_track_id is not None:
+            print(f"[YOLO-DDS] locked to track_id={self._locked_track_id}")
 
     def _callback(self, msg):
         try:
@@ -399,6 +408,19 @@ class YoloDdsObstacleDetector:
     def debug_snapshot(self) -> dict:
         return dict(self._debug)
 
+    def set_track_lock(self, track_id: int):
+        track_id = int(track_id)
+        if track_id < 0:
+            return
+        self._locked_track_id = track_id
+        self._lock_first_track = False
+        print(f"[YOLO-DDS] locked to track_id={track_id}")
+
+    def clear_track_lock(self):
+        self._locked_track_id = None
+        self._ignored_track_count = 0
+        self._reset_kf()
+
     def detect(self, robot_pos: np.ndarray, robot_yaw: float) -> np.ndarray | None:
         with self._lock:
             data = self._latest
@@ -409,6 +431,23 @@ class YoloDdsObstacleDetector:
         has_detection = (data is not None
                          and age <= self._staleness
                          and data.get("n", 0) >= 1)
+        track_id = -1
+        ignored_track_id = None
+        if data is not None:
+            try:
+                track_id = int(data.get("track_id", -1))
+            except (TypeError, ValueError):
+                track_id = -1
+        if has_detection and self._lock_first_track and self._locked_track_id is None:
+            if track_id >= 0:
+                self._locked_track_id = track_id
+                self._lock_first_track = False
+                print(f"[YOLO-DDS] locked first track_id={track_id}")
+        if has_detection and self._locked_track_id is not None:
+            if track_id != self._locked_track_id:
+                ignored_track_id = track_id
+                self._ignored_track_count += 1
+                has_detection = False
         if not has_detection:
             # No fresh detection. Hold last KF state if recent enough.
             if (self._use_kalman and self._kf_x is not None
@@ -427,11 +466,15 @@ class YoloDdsObstacleDetector:
                 self._kf_P = F @ self._kf_P @ F.T + Q
                 self._kf_n_held += 1
                 self._debug = {
-                    "status": "held",
+                    "status": "held_ignored_track" if ignored_track_id is not None else "held",
                     "age": age,
                     "frame_id": data.get("frame_id", -1) if data else -1,
                     "raw_n": data.get("n", 0) if data else 0,
                     "msg_count": msg_count,
+                    "track_id": track_id,
+                    "locked_track_id": self._locked_track_id,
+                    "ignored_track_id": ignored_track_id,
+                    "ignored_tracks": self._ignored_track_count,
                     "hold_age": now - self._kf_last_accept_t,
                     "kf_xy": (float(self._kf_x[0]), float(self._kf_x[1])),
                     "kf_vxy": (float(self._kf_x[2]), float(self._kf_x[3])),
@@ -445,13 +488,20 @@ class YoloDdsObstacleDetector:
                                 dtype=np.float32)
             status = "none"
             if data is not None:
-                status = "stale" if age > self._staleness else "empty"
+                if ignored_track_id is not None:
+                    status = "ignored_track"
+                else:
+                    status = "stale" if age > self._staleness else "empty"
             self._debug = {
                 "status": status,
                 "age": age,
                 "frame_id": data.get("frame_id", -1) if data else -1,
                 "raw_n": data.get("n", 0) if data else 0,
                 "msg_count": msg_count,
+                "track_id": track_id,
+                "locked_track_id": self._locked_track_id,
+                "ignored_track_id": ignored_track_id,
+                "ignored_tracks": self._ignored_track_count,
                 "accepted": self._kf_n_accepted,
                 "rejected": self._kf_n_rejected,
                 "held": self._kf_n_held,
@@ -478,6 +528,9 @@ class YoloDdsObstacleDetector:
                 "frame_id": int(data.get("frame_id", -1)),
                 "raw_n": data.get("n", 0),
                 "msg_count": msg_count,
+                "track_id": track_id,
+                "locked_track_id": self._locked_track_id,
+                "ignored_tracks": self._ignored_track_count,
                 "raw_body": (x_b, y_b, z),
                 "raw_dist": float(data.get("dist", np.hypot(x_b, y_b))),
                 "bearing": float(data.get("bearing", np.degrees(np.arctan2(y_b, x_b)))),
@@ -554,6 +607,9 @@ class YoloDdsObstacleDetector:
             "frame_id": fid,
             "raw_n": data.get("n", 0),
             "msg_count": msg_count,
+            "track_id": track_id,
+            "locked_track_id": self._locked_track_id,
+            "ignored_tracks": self._ignored_track_count,
             "raw_body": (x_b, y_b, z),
             "raw_dist": float(data.get("dist", np.hypot(x_b, y_b))),
             "bearing": float(data.get("bearing", np.degrees(np.arctan2(y_b, x_b)))),

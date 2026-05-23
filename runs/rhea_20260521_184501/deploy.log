@@ -1,0 +1,66 @@
+/home/zz4723/g1-rl-demo/.venv/lib/python3.8/site-packages/torch/nn/modules/transformer.py:306: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(f"enable_nested_tensor is True, but self.use_nested_tensor is False because {why_not_sparsity_fast_path}")
+[motion_switcher] keeping current built-in mode='ai'
+[ODOM-DDS] subscribing to rt/dodge/odom
+[loco] initial fsm=4(code=0) mode=0(code=0) balance=1(code=0)
+[DodgePolicy] Loaded transformer: embed=64, act=3, obs=18, tokens=7, weights=48/63
+[DodgePolicy] Normalizer loaded: mean shape=torch.Size([1, 18])
+[RETURN] geo mode uses SLAM displacement to return to the dodge origin; SDK velocity frame is measured with a short SLAM probe when enabled, or loaded from manual calibration.
+[YOLO-DDS] subscribing to rt/yolo/person, stale>0.5s ⇒ no-detect
+[YOLO-DDS] KF q_pos=0.02 q_vel=0.4 R=0.1/0.3 gate=4.0σ
+
+[SDK LOCO DODGE]
+  backend=Unitree LocoClient.SetVelocity, no rt/lowcmd, no motion.pt
+  max_vel=0.30m/s max_ang=0.00rad/s safety=1.00m clear_margin=0.00m cmd_hz=10.0
+  loco state: start=fsm=200 balance=1 require_ready=True
+  idle: StopMove once, then no SetVelocity stream
+  close_escape min_away=0.30m/s (capped by per-axis max_vel and bearing)
+  return: on mode=geo max_vel=0.25m/s done=0.10m delay=1.0s timeout=15.0s no_progress=3.0s online_map=3/8
+  return settle: window=1.0s disp<=0.03m and avg_speed<=0.03m/s; abort_after=4.0s
+  return prestop: zero velocity + StopMove before settle/probe
+  return abort: exit + StopMove
+  return geo: direct point-to-origin control from SLAM x/y + LIO yaw; online command/SLAM frame is diagnostic only; sdk_probe=on probe_min=0.08m probe_axis_cos<=0.70 probe_retry=1x@1.7
+  startup frame calib: on dist=0.50m speed=0.25m/s y_sign=-1
+  return odom=external topic=rt/dodge/odom stale>0.35s startup=5msgs/1.0s before loco
+  yolo target lock=first-dodge-track
+  yolo start gate: valid non-held track_id required confirm=2 frames
+  Enabled immediately. Press SELECT to StopMove and exit.
+  Software emergency: hold L2+B for 2.0s to send Damp() and exit.
+
+[ODOM] sustained external origin set before loco start at [+0.05,-0.05] age=0.01s msgs=9
+[loco] SetFsmId(200)  # Start
+[loco] SetFsmId(200) returned code=0
+[loco] after Start fsm=200(code=0) mode=1(code=0) balance=0(code=0)
+[loco] SetBalanceMode(1)
+[loco] SetBalanceMode returned code=0
+[loco] after BalanceMode fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[loco] ready check fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[STARTUP CALIB] active SDK/SLAM calibration before YOLO dodge
+[STARTUP CALIB] keep a clear area; YOLO dodge is not enabled yet
+[STARTUP CALIB] waiting stationary before +x: window=0.103m/1.0s > 0.050m
+[STARTUP CALIB] waiting stationary before +x: window=0.068m/1.0s > 0.050m
+[STARTUP CALIB] waiting stationary before +x: window=0.150m/1.0s > 0.050m
+[STARTUP CALIB] start x=-0.167 y=-0.155 yaw=0.36713382601737987
+[STARTUP CALIB] +x progress 0.000/0.500m delta=[+0.000,+0.000]
+[STARTUP CALIB] +x progress 0.048/0.500m delta=[-0.006,+0.048]
+[STARTUP CALIB] +x progress 0.100/0.500m delta=[-0.001,+0.100]
+[STARTUP CALIB] +x progress 0.081/0.500m delta=[+0.045,+0.067]
+[STARTUP CALIB] +x progress 0.105/0.500m delta=[+0.068,+0.079]
+[STARTUP CALIB] +x progress 0.162/0.500m delta=[+0.052,+0.154]
+[STARTUP CALIB] +x progress 0.184/0.500m delta=[+0.078,+0.167]
+[STARTUP CALIB] +x progress 0.161/0.500m delta=[+0.109,+0.119]
+[STARTUP CALIB] +x progress 0.188/0.500m delta=[+0.120,+0.145]
+[STARTUP CALIB] +x progress 0.220/0.500m delta=[+0.115,+0.187]
+[STARTUP CALIB] +x progress 0.199/0.500m delta=[+0.131,+0.150]
+[STARTUP CALIB] +x progress 0.198/0.500m delta=[+0.128,+0.151]
+[EXIT] zero velocity + StopMove
+Traceback (most recent call last):
+  File "/home/zz4723/g1-rl-demo/deploy_dodge_sdk_loco.py", line 2648, in <module>
+    main()
+  File "/home/zz4723/g1-rl-demo/deploy_dodge_sdk_loco.py", line 1558, in main
+    manual_return_frame_meta) = _run_startup_frame_calib(
+  File "/home/zz4723/g1-rl-demo/deploy_dodge_sdk_loco.py", line 780, in _run_startup_frame_calib
+    dx = _command_axis_until_delta(
+  File "/home/zz4723/g1-rl-demo/deploy_dodge_sdk_loco.py", line 722, in _command_axis_until_delta
+    raise RuntimeError(
+RuntimeError: +x did not reach 0.500m; best=0.225m delta=[+0.106,+0.198]

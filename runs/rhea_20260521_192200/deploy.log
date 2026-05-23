@@ -1,0 +1,73 @@
+/home/zz4723/g1-rl-demo/.venv/lib/python3.8/site-packages/torch/nn/modules/transformer.py:306: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.norm_first was True
+  warnings.warn(f"enable_nested_tensor is True, but self.use_nested_tensor is False because {why_not_sparsity_fast_path}")
+[motion_switcher] keeping current built-in mode='ai'
+[ODOM-DDS] subscribing to rt/dodge/odom
+[loco] initial fsm=4(code=0) mode=0(code=0) balance=1(code=0)
+[DodgePolicy] Loaded transformer: embed=64, act=3, obs=18, tokens=7, weights=48/63
+[DodgePolicy] Normalizer loaded: mean shape=torch.Size([1, 18])
+[RETURN] geo mode uses SLAM displacement to return to the dodge origin; SDK velocity frame is measured with a short SLAM probe when enabled, or loaded from manual calibration.
+[YOLO-DDS] subscribing to rt/yolo/person, stale>0.5s ⇒ no-detect
+[YOLO-DDS] KF q_pos=0.02 q_vel=0.4 R=0.1/0.3 gate=4.0σ
+
+[SDK LOCO DODGE]
+  backend=Unitree LocoClient.SetVelocity, no rt/lowcmd, no motion.pt
+  max_vel=0.40m/s max_ang=0.00rad/s safety=1.00m clear_margin=0.00m cmd_hz=10.0
+  loco state: start=fsm=200 balance=1 require_ready=True
+  idle: StopMove once, then no SetVelocity stream
+  close_escape min_away=0.40m/s (capped by per-axis max_vel and bearing)
+  return: on mode=geo max_vel=0.25m/s done=0.10m delay=1.0s timeout=15.0s no_progress=3.0s online_map=3/8
+  return settle: window=1.0s disp<=0.03m and avg_speed<=0.03m/s; abort_after=4.0s
+  return prestop: zero velocity + StopMove before settle/probe
+  return abort: exit + StopMove
+  return frame yaw: fixed calibrated frame; slam_yaw_drift_abort=0.45rad
+  return geo: direct point-to-origin control from SLAM x/y + LIO yaw; online command/SLAM frame is diagnostic only; sdk_probe=on probe_min=0.08m probe_axis_cos<=0.70 probe_retry=1x@1.7
+  startup frame calib: on dist=0.50m speed=0.40m/s y_sign=-1
+  return odom=external topic=rt/dodge/odom stale>0.35s startup=5msgs/1.0s before loco
+  yolo target lock=first-dodge-track
+  yolo start gate: valid non-held track_id required confirm=2 frames
+  Enabled immediately. Press SELECT to StopMove and exit.
+  Software emergency: hold L2+B for 2.0s to send Damp() and exit.
+
+[ODOM] sustained external origin set before loco start at [-0.12,+0.01] age=0.08s msgs=9
+[loco] SetFsmId(200)  # Start
+[loco] SetFsmId(200) returned code=0
+[loco] after Start fsm=200(code=0) mode=1(code=0) balance=0(code=0)
+[loco] SetBalanceMode(1)
+[loco] SetBalanceMode returned code=0
+[loco] after BalanceMode fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[loco] ready check fsm=200(code=0) mode=1(code=0) balance=1(code=0)
+[STARTUP CALIB] active SDK/SLAM calibration before YOLO dodge
+[STARTUP CALIB] keep a clear area; YOLO dodge is not enabled yet
+[STARTUP CALIB] waiting stationary before +x: window=0.060m/1.0s > 0.050m
+[STARTUP CALIB] start x=-0.259 y=+0.021 yaw=0.05380770191550254
+[STARTUP CALIB] +x progress 0.000/0.500m delta=[+0.000,+0.000]
+[STARTUP CALIB] +x progress 0.013/0.500m delta=[+0.001,+0.012]
+[STARTUP CALIB] +x progress 0.055/0.500m delta=[+0.025,+0.049]
+[STARTUP CALIB] +x progress 0.055/0.500m delta=[+0.052,-0.018]
+[STARTUP CALIB] +x progress 0.074/0.500m delta=[+0.073,-0.012]
+[STARTUP CALIB] +x progress 0.128/0.500m delta=[+0.113,+0.062]
+[STARTUP CALIB] +x progress 0.174/0.500m delta=[+0.164,+0.057]
+[STARTUP CALIB] +x progress 0.205/0.500m delta=[+0.205,+0.004]
+[STARTUP CALIB] +x progress 0.263/0.500m delta=[+0.260,+0.040]
+[STARTUP CALIB] +x progress 0.299/0.500m delta=[+0.291,+0.070]
+[STARTUP CALIB] +x progress 0.382/0.500m delta=[+0.375,+0.073]
+[STARTUP CALIB] +x progress 0.439/0.500m delta=[+0.417,+0.140]
+[STARTUP CALIB] +x reached 0.509m delta=[+0.474,+0.186]
+[STARTUP CALIB] waiting stationary before +y: window=0.075m/1.0s > 0.050m
+[STARTUP CALIB] visible right progress 0.000/0.500m delta=[+0.000,+0.000]
+[STARTUP CALIB] visible right progress 0.030/0.500m delta=[-0.014,-0.026]
+[STARTUP CALIB] visible right progress 0.107/0.500m delta=[-0.107,+0.011]
+[STARTUP CALIB] visible right progress 0.230/0.500m delta=[-0.190,+0.129]
+[STARTUP CALIB] visible right progress 0.372/0.500m delta=[-0.297,+0.224]
+[STARTUP CALIB] visible right progress 0.451/0.500m delta=[-0.356,+0.277]
+[STARTUP CALIB] visible right reached 0.601m delta=[-0.448,+0.399]
+[STARTUP CALIB] waiting stationary before finish: window=0.131m/1.0s > 0.050m
+[EXIT] zero velocity + StopMove
+Traceback (most recent call last):
+  File "/home/zz4723/g1-rl-demo/deploy_dodge_sdk_loco.py", line 2727, in <module>
+    main()
+  File "/home/zz4723/g1-rl-demo/deploy_dodge_sdk_loco.py", line 1606, in main
+    manual_return_frame_meta) = _run_startup_frame_calib(
+  File "/home/zz4723/g1-rl-demo/deploy_dodge_sdk_loco.py", line 861, in _run_startup_frame_calib
+    raise RuntimeError(
+RuntimeError: yaw changed too much during startup calibration: 26.7deg

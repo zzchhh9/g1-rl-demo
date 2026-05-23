@@ -129,21 +129,80 @@ int ret = video_client.GetImageSample(jpeg_bytes);
 
 ---
 
-## 下一步开发思路（机器人关机后笔记本上做的）
+## ✅ 最终核对：发现 Python VideoClient 现成可用
 
-可以并行做的事，不依赖机器人在线：
+笔记本的 `third_party/unitree_sdk2_python` 里已经有完整 Python 实现，**不用再造轮子**：
 
-1. **看 unitree_sdk2py 里有没有 VideoClient 的 Python 实现**。如果有，直接用。如果没有：
-   - 用 `ChannelPublisher("rt/api/videohub/request", Request)` + `ChannelSubscriber("rt/api/videohub/response", Response)` 自己包装
-   - API ID = 1001
-2. **写 RGB 帧 grab 函数**：返回 numpy HxWx3 uint8
-3. **YOLO v8 person detection**：`pip install ultralytics`，预训练权重，输入 RGB → 输出 bbox 列表
-4. **印棋盘格 + 拍标定图**（重新开机时做）→ 跑 `cv2.calibrateCamera()` 得 K
-5. **LiDAR↔相机外参**：找 1-2 个能同时被两传感器看到的标定点（角点 + 反光胶带），手动标 → solvePnP
-6. **融合**：每帧 (LiDAR 点云, RGB) 同步取 → YOLO 出 bbox → bbox 像素角点反投影成锥 → 用锥过滤 LiDAR 点 → 取这些点的中心作为"人的 3D 位置"
+```
+unitree_sdk2py/go2/video/video_client.py       ← VideoClient 类
+unitree_sdk2py/go2/video/video_api.py          ← API ID 常量
+unitree_sdk2py/idl/unitree_go/msg/dds_/        ← Go2FrontVideoData_ Python 类
+                  _Go2FrontVideoData_.py
+example/go2/front_camera/capture_image.py      ← 拉单帧示例（关机后立即可写代码用）
+example/go2/front_camera/camera_opencv.py      ← 实时视频示例（OpenCV display）
+```
 
-YOLO 在你笔记本上跑得动（一张 GPU 30+ FPS），不用部署到 Jetson。
+**3 行拉 JPEG**：
+```python
+from unitree_sdk2py.core.channel import ChannelFactoryInitialize
+from unitree_sdk2py.go2.video.video_client import VideoClient
+
+ChannelFactoryInitialize(0, 'eno1')   # eno1 = 笔记本网卡名
+client = VideoClient(); client.SetTimeout(3.0); client.Init()
+code, jpeg_bytes = client.GetImageSample()
+# code==0 表示成功；jpeg_bytes 用 cv2.imdecode(np.frombuffer(jpeg_bytes, np.uint8), cv2.IMREAD_COLOR) 解码即得 BGR HxWx3
+```
+
+底层走 `rt/api/videohub/request` → `videohub_pc4` 处理 → `rt/api/videohub/response`。
 
 ---
 
-最后更新：2026-05-15，机器人关机前最后一次同步。
+## 调试就绪状态
+
+| 项 | 状态 |
+|---|---|
+| 拉 JPEG 帧的代码路径 | ✅ Python `VideoClient.GetImageSample()` 已存在并验证过 API 形态 |
+| GStreamer pipeline 知识 | ✅ 从 binary strings 完整抽出 |
+| DDS topic / RPC API 定义 | ✅ `Go2FrontVideoData_`、`Request_`、`Response_` IDL/hpp 都在本目录 |
+| 相机硬件参数 | ✅ /dev/video4，UVC USB，1920x1080 YUY2 @ 15fps |
+| **相机内参 (K, distortion)** | ❌ **必须自己标定**（棋盘格 + cv2.calibrateCamera）|
+| **LiDAR↔相机外参 (TF)** | ❌ **必须自己标定** |
+| 相机本身在线 | ❌ 此次抓取时未插（USB 未枚举）。**下次开机请先确认 `lsusb` 能看到 webcam，且 `/dev/video4` 存在**。如果还不行，检查 `videohub_pc4` 服务有没有起：`/unitree/sbin/mscli status video_hub_pc4` |
+| YOLO 模型 | 可装：`uv pip install ultralytics`（笔记本上跑 30+ FPS）|
+
+---
+
+## 下一步（机器人关机后笔记本上能干的事）
+
+1. **写 `g1_camera.py`** — 把 `VideoClient.GetImageSample()` 包装成 `def get_frame() -> np.ndarray` 返回 BGR HxWx3
+2. **装并测试 YOLOv8** — 用任意一张 JPG 跑 person detection，确认推理通
+3. **写棋盘格标定脚本**（不需要机器人在线，可以提前准备） — 标定流程：
+   ```python
+   # take_calib_photos.py  — 下次插上相机时跑
+   for i in range(30):
+       _, jpeg = client.GetImageSample()
+       open(f'calib/{i}.jpg', 'wb').write(jpeg)
+       input("move chessboard, enter for next")
+   
+   # do_calib.py
+   import cv2, numpy as np, glob
+   objp = np.zeros((9*7, 3), np.float32)
+   objp[:, :2] = np.mgrid[0:9, 0:7].T.reshape(-1, 2) * 0.025  # 25mm 方格
+   objpts, imgpts = [], []
+   for f in glob.glob('calib/*.jpg'):
+       img = cv2.imread(f); gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+       ok, corners = cv2.findChessboardCorners(gray, (9, 7))
+       if ok: objpts.append(objp); imgpts.append(corners)
+   ret, K, D, rvecs, tvecs = cv2.calibrateCamera(objpts, imgpts, gray.shape[::-1], None, None)
+   np.save('K.npy', K); np.save('D.npy', D)
+   ```
+4. **LiDAR↔相机外参标定**（也需要相机在线，但脚本可以预写）：
+   - 在场景里放一个能被两个传感器同时辨识的物体（黑白棋盘 + 角点贴反光胶带）
+   - LiDAR 点云里手动框出棋盘角点的 xyz
+   - 图像里用 cv2.findChessboardCorners 得像素
+   - cv2.solvePnP 求 rvec/tvec
+5. **YOLO + LiDAR fusion class**：每帧拉 (rgb_frame, lidar_points)，YOLO 出 bbox，bbox → 锥 → 过滤点云 → 中心 = "人的 3D 位置"
+
+---
+
+最后更新：2026-05-15，机器人关机前最后一次同步。审计了所有缺口；唯一还需要等相机插回来才能做的事是**标定**（内参 + LiDAR/相机外参）。其他全部可以离线开发。

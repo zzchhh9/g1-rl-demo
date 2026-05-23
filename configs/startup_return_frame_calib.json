@@ -1,0 +1,38 @@
+{
+  "body_convention": "SDK SetVelocity command frame as measured",
+  "created_unix": 1779386273.9890234,
+  "rot_cmd_to_world": [
+    [
+      0.925622284412384,
+      0.37844860553741455
+    ],
+    [
+      0.37844857573509216,
+      -0.9256223440170288
+    ]
+  ],
+  "type": "startup_sdk_slam_return_frame",
+  "validation": {
+    "det": -1.0,
+    "distance_target_m": 0.5,
+    "dx": [
+      0.4639100432395935,
+      0.18967358767986298
+    ],
+    "dy_measured": [
+      0.03126101195812225,
+      0.5327906608581543
+    ],
+    "dy_plus_y": [
+      -0.03126101195812225,
+      -0.5327906608581543
+    ],
+    "end_yaw": -0.00708599900826812,
+    "fit": "dx=0.501m dy=0.534m orth=0.481m axis_cos=-0.43 det=-1.00",
+    "speed_mps": 0.4,
+    "y_cmd_sign": -1.0,
+    "yaw_drift_rad": 0.28281032061204314,
+    "yaw_ref": 0.2757243216037751
+  },
+  "yaw_ref": 0.2757243216037751
+}
