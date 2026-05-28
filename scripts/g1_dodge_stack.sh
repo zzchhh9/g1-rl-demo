@@ -40,6 +40,13 @@ FAKE_YOLO_START_DIST="${FAKE_YOLO_START_DIST:-0.50}"
 FAKE_YOLO_END_DIST="${FAKE_YOLO_END_DIST:-1.60}"
 FAKE_YOLO_BEARING_DEG="${FAKE_YOLO_BEARING_DEG:-0.0}"
 FAKE_YOLO_TRACK_ID="${FAKE_YOLO_TRACK_ID:-9001}"
+FAKE_YOLO_TRAJECTORY="${FAKE_YOLO_TRAJECTORY:-0}"  # 1 = randomized crossing (front/diag/back)
+FAKE_YOLO_LOOP="${FAKE_YOLO_LOOP:-0}"              # 1 = repeat passes
+FAKE_YOLO_EXTRA=""
+[ "$FAKE_YOLO_TRAJECTORY" = "1" ] && FAKE_YOLO_EXTRA="$FAKE_YOLO_EXTRA --trajectory"
+[ "$FAKE_YOLO_LOOP" = "1" ] && FAKE_YOLO_EXTRA="$FAKE_YOLO_EXTRA --loop"
+FAKE_YOLO_MAX_PASSES="${FAKE_YOLO_MAX_PASSES:-5}"  # YOLO_SOURCE=sequence: number of triggers
+FAKE_YOLO_POST_GAP="${FAKE_YOLO_POST_GAP:-5.0}"    # seconds after each recover before next
 MAX_VEL="${MAX_VEL:-0.30}"
 # Keep the real evasive trigger close to the robot. By default, one meter is
 # the boundary: dodge starts inside it, stops outside it after the return clear
@@ -351,10 +358,22 @@ python scripts/yolo_to_dds_laptop.py \
   --end-dist '$FAKE_YOLO_END_DIST' \
   --bearing-deg '$FAKE_YOLO_BEARING_DEG' \
   --track-id '$FAKE_YOLO_TRACK_ID' \
+  --print-every '$YOLO_PRINT_EVERY' $FAKE_YOLO_EXTRA; bash"
+            ;;
+        sequence)
+            echo "[stack] using fake YOLO SEQUENCE publisher ($FAKE_YOLO_MAX_PASSES passes)"
+            run_window "yolo" \
+                "PYTHONUNBUFFERED=1 uv run python scripts/fake_yolo_sequence_dds.py '$NET' \
+  --topic '$DDS_YOLO_TOPIC' \
+  --odom-topic '$DDS_ODOM_TOPIC' \
+  --max-passes '$FAKE_YOLO_MAX_PASSES' \
+  --start-delay '$FAKE_YOLO_START_DELAY' \
+  --post-recover-gap '$FAKE_YOLO_POST_GAP' \
+  --track-id '$FAKE_YOLO_TRACK_ID' \
   --print-every '$YOLO_PRINT_EVERY'; bash"
             ;;
         *)
-            echo "[stack] unknown YOLO_SOURCE=$YOLO_SOURCE; expected real or fake" >&2
+            echo "[stack] unknown YOLO_SOURCE=$YOLO_SOURCE; expected real, fake, or sequence" >&2
             exit 2
             ;;
     esac

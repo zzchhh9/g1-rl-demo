@@ -528,6 +528,33 @@ def _load_return_head(path: str | Path) -> nn.Module:
     return model
 
 
+def _load_gated_return_head(path: str | Path) -> nn.Module:
+    """Rebuild the 6-dim return_head MLP from a gated checkpoint.
+
+    Mirrors eval_safe_recovery.py: Sequential(Linear, ELU, ..., Linear, Tanh)
+    inferred from the sorted return_head.* weight shapes.
+    """
+    ckpt_path = Path(path)
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"gated checkpoint not found: {ckpt_path}")
+    md = torch.load(str(ckpt_path), map_location="cpu",
+                    weights_only=False)["model_state_dict"]
+    rsd = {k.replace("return_head.", ""): v for k, v in md.items()
+           if k.startswith("return_head.")}
+    if not rsd:
+        raise ValueError(f"no return_head.* weights in {ckpt_path}")
+    wk = sorted(k for k in rsd if k.endswith(".weight"))
+    mods: list[nn.Module] = []
+    for i, k in enumerate(wk):
+        mods.append(nn.Linear(rsd[k].shape[1], rsd[k].shape[0]))
+        mods.append(nn.ELU() if i < len(wk) - 1 else nn.Tanh())
+    model = nn.Sequential(*mods)
+    model.load_state_dict(rsd)
+    model.eval()
+    print(f"[GatedReturn] Loaded {ckpt_path} (input {rsd[wk[0]].shape[1]}D)")
+    return model
+
+
 def _return_head_velocity(return_head: nn.Module,
                           disp_b: np.ndarray,
                           lin_scale: float,
@@ -1056,14 +1083,28 @@ def main():
                              "velocity commands and walk back toward the start pose.")
     parser.add_argument("--no_return", dest="return_enable", action="store_false",
                         help="Disable post-dodge return.")
-    parser.add_argument("--return_mode", choices=["geo", "head", "p"], default="geo",
+    parser.add_argument("--return_mode", choices=["geo", "head", "p", "gated"], default="geo",
                         help="'geo' uses SLAM displacement plus live LIO yaw to command "
                              "directly toward the dodge origin. 'head' uses "
                              "checkpoints/return_head_v23b_v6.pt for debugging. "
-                             "'p' keeps the old hand-written P controller.")
+                             "'p' keeps the old hand-written P controller. 'gated' uses "
+                             "the learned return_head inside --gated_ckpt.")
     parser.add_argument("--return_head_ckpt",
                         default=str(_REPO / "checkpoints" / "return_head_v23b_v6.pt"),
                         help="Checkpoint for the trained return head.")
+    parser.add_argument("--gated_ckpt",
+                        default=str(_REPO / "checkpoints" / "v23b_gated_return.pt"),
+                        help="Checkpoint holding the gated return_head (6-dim MLP). "
+                             "Used when --return_mode gated.")
+    parser.add_argument("--return_gated_lin_vel", type=float, default=0.5,
+                        help="Linear velocity scale (m/s) applied to the gated "
+                             "return_head XY action. 0.5 matches training; lower to "
+                             "~0.25 to match the validated geo return speed.")
+    parser.add_argument("--return_gated_yaw_sign", type=float, default=-1.0,
+                        help="Sign applied to the heading error fed as the gated "
+                             "return_head's yaw input, so its own v_rz output matches "
+                             "this robot's turn direction. -1 matches geo; flip to +1 "
+                             "if return yaw rotates the wrong way.")
     parser.add_argument("--return_max_vel", type=float, default=0.25,
                         help="Per-axis cap for post-dodge return velocity.")
     parser.add_argument("--return_min_vel", type=float, default=0.12,
@@ -1361,6 +1402,12 @@ def main():
               "use --return_mode geo for real SDK deploy unless you are "
               "intentionally testing the checkpoint return head.")
         return_head = _load_return_head(args.return_head_ckpt)
+    gated_return_head = None
+    if args.return_enable and args.return_mode == "gated":
+        gated_return_head = _load_gated_return_head(args.gated_ckpt)
+        print("[RETURN] gated mode: learned return_head drives return (dodge "
+              "unchanged). Deterministic state machine gates dodge vs return; "
+              "the checkpoint's learned gate is not used.")
     if args.return_enable and args.return_mode == "geo":
         print("[RETURN] geo mode uses SLAM displacement to return to the dodge "
               "origin; SDK velocity frame is measured with a short SLAM probe "
@@ -1520,6 +1567,10 @@ def main():
         print(f"  return head guard={'on' if args.return_head_guard else 'off'} "
               f"freeze_frame={'on' if args.return_freeze_frame else 'off'} "
               f"lat_cap={args.return_max_lat_vel:.2f}m/s")
+    if args.return_mode == "gated":
+        print(f"  return gated: ckpt={Path(args.gated_ckpt).name} "
+              f"lin_vel={args.return_gated_lin_vel:.2f}m/s "
+              f"yaw_clamp=0.50rad/s xy_amp=2x (gate=state-machine, dodge unchanged)")
     if args.return_mode == "p":
         print(f"  return P-controller: lat_sign={args.return_lateral_sign:+.0f} "
               f"lat_gain={args.return_lat_gain:.2f} "
@@ -2055,7 +2106,7 @@ def main():
                         ewma[:] = 0.0
                         clear_since = None
                         geo_needs_online = (
-                            args.return_mode != "geo"
+                            args.return_mode not in ("geo", "gated")
                             and return_odom_mode == "external"
                             and args.return_require_online_frame)
                         online_ready = (odom_frame.rotation() is not None)
@@ -2673,6 +2724,41 @@ def main():
                                         -args.return_yaw_gain * yaw_err,
                                         -args.return_max_ang_vel,
                                         args.return_max_ang_vel))
+                        elif args.return_mode == "gated" and gated_return_head is not None:
+                            return_guarded = False
+                            # Return-head input uses GEO's ONLINE-calibrated body frame
+                            # (`disp_b`, fitted from SDK-command vs odom-delta) — the raw
+                            # lowstate/LIO yaw is too unreliable here. The yaw input is the
+                            # heading error (geo's yaw_err) with --return_gated_yaw_sign, so
+                            # the return_head's OWN v_rz comes out matching geo's validated
+                            # turn direction. We correct the INPUT, not override the output,
+                            # so a_ret stays a full learned 3-DOF action.
+                            _yaw_disp = 0.0
+                            if current_return_yaw is not None:
+                                _yaw_disp = (float(args.return_gated_yaw_sign)
+                                             * _wrap_pi(current_return_yaw - dodge_start_yaw))
+                            _raw6 = np.array([disp_b[0], disp_b[1], _yaw_disp, 0.0, 0.0, 0.0],
+                                             dtype=np.float32)
+                            with torch.no_grad():
+                                _ga = gated_return_head(
+                                    torch.from_numpy(_raw6).float().unsqueeze(0)
+                                ).squeeze(0).numpy()
+                            _ga = np.clip(_ga, -1.0, 1.0)
+                            # eval_safe_recovery.py:2870-2880: yaw clamp ±0.5, DEPART XY 2x amp
+                            _ga[2] = float(np.clip(_ga[2], -0.5, 0.5))
+                            _ga[0] = float(np.clip(2.0 * _ga[0], -1.0, 1.0))
+                            _ga[1] = float(np.clip(2.0 * _ga[1], -1.0, 1.0))
+                            target[0] = _ga[0] * float(args.return_gated_lin_vel)
+                            target[1] = (_ga[1] * float(args.return_gated_lin_vel)
+                                         * float(args.return_lateral_sign))
+                            # Yaw = the return_head's own v_rz (capped by --return_max_ang_vel).
+                            target[2] = 0.0
+                            if args.return_max_ang_vel > 0.0:
+                                target[2] = float(np.clip(
+                                    _ga[2] * float(dodge.MAX_ANG_VEL),
+                                    -args.return_max_ang_vel, args.return_max_ang_vel))
+                            return_raw = _ga
+                            return_head_cmd = target.copy()
                         else:
                             return_raw = None
                             return_head_cmd = None
