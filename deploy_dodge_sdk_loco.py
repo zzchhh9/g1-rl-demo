@@ -570,7 +570,8 @@ def _fused_return_yaw(origin_odom_yaw: float | None,
                       origin_low_yaw: float | None,
                       current_low_yaw: float,
                       current_odom_yaw: float | None,
-                      source: str) -> tuple[float | None, str, float | None, float | None, float | None]:
+                      source: str,
+                      low_yaw_sign: float = -1.0) -> tuple[float | None, str, float | None, float | None, float | None]:
     """Yaw used for world->SDK return commands.
 
     FAST-LIO x/y is useful as a map displacement, but its live yaw can diverge
@@ -584,7 +585,10 @@ def _fused_return_yaw(origin_odom_yaw: float | None,
     if origin_odom_yaw is not None and current_odom_yaw is not None:
         slam_delta = _wrap_pi(float(current_odom_yaw) - float(origin_odom_yaw))
     if origin_low_yaw is not None:
-        low_delta = _wrap_pi(float(current_low_yaw) - float(origin_low_yaw))
+        # lowstate IMU yaw rotates opposite to the FAST-LIO map frame on this
+        # robot, so flip its delta before fusing with the SLAM origin yaw.
+        low_delta = float(low_yaw_sign) * _wrap_pi(
+            float(current_low_yaw) - float(origin_low_yaw))
     if slam_delta is not None and low_delta is not None:
         mismatch = abs(_wrap_pi(slam_delta - low_delta))
 
@@ -1220,6 +1224,20 @@ def main():
     parser.add_argument("--return_lateral_sign", type=float, default=-1.0,
                         help="Sign applied to external-odom return lateral command after "
                              "rotating odom displacement into body frame.")
+    parser.add_argument("--return_low_yaw_sign", type=float, default=-1.0,
+                        help="Sign applied to the lowstate yaw delta before fusing with "
+                             "the SLAM origin yaw. -1 matches the FAST-LIO map frame on "
+                             "this robot; use +1 if lowstate and SLAM yaw rotate the same "
+                             "way.")
+    parser.add_argument("--return_max_ang_vel", type=float, default=0.3,
+                        help="Yaw-rate cap rad/s for geo-return heading correction "
+                             "(restores the dodge-start heading). 0 disables turning "
+                             "during return. Independent of --max_ang_vel (dodge).")
+    parser.add_argument("--return_yaw_gain", type=float, default=-1.5,
+                        help="P gain on heading error for geo-return turning. Default "
+                             "-1.5 matches this robot's SetVelocity-omega vs SLAM-yaw "
+                             "sign (validated on hardware); flip to positive only if a "
+                             "future setup turns the wrong way.")
     parser.add_argument("--return_max_lat_vel", type=float, default=0.08,
                         help="Per-axis cap for lateral return velocity. Lower values "
                              "avoid sideways overshoot during recovery.")
@@ -1748,6 +1766,7 @@ def main():
                     float(yaw),
                     current_odom_yaw,
                     args.return_yaw_source,
+                    low_yaw_sign=args.return_low_yaw_sign,
                 )
             else:
                 current_return_yaw = float(yaw)
@@ -2643,6 +2662,17 @@ def main():
                                 min_vel=args.return_min_vel,
                                 done_dist=args.return_done_dist,
                             )
+                            if (args.return_max_ang_vel > 0.0
+                                    and current_return_yaw is not None):
+                                # Turn back toward the dodge-start heading while
+                                # walking home; once heading is restored the home
+                                # vector becomes mostly forward instead of lateral.
+                                yaw_err = _wrap_pi(current_return_yaw - dodge_start_yaw)
+                                if abs(yaw_err) > 0.10:
+                                    target[2] = float(np.clip(
+                                        -args.return_yaw_gain * yaw_err,
+                                        -args.return_max_ang_vel,
+                                        args.return_max_ang_vel))
                         else:
                             return_raw = None
                             return_head_cmd = None
