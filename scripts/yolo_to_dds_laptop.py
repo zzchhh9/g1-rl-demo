@@ -45,6 +45,10 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--robot-ip",  default="192.168.123.164")
     p.add_argument("--port",      type=int, default=5005)
+    p.add_argument("--reconnect", dest="reconnect", action="store_true", default=True,
+                   help="On camera TCP EOF, reconnect and keep running (default).")
+    p.add_argument("--no-reconnect", dest="reconnect", action="store_false",
+                   help="Exit on camera disconnect instead of reconnecting.")
     p.add_argument("--net",       default="eno1")
     p.add_argument("--topic",     default="rt/yolo/person")
     p.add_argument("--model",     default="yolov8m.pt")
@@ -155,12 +159,40 @@ def main():
             if args.duration > 0 and (time.time() - t_loop) > args.duration:
                 print(f"[stop] duration {args.duration}s reached")
                 break
-            header = recv_exact(sock, 4 + 8 + 4 + 4)
-            frame_id, ts_ms, c_len, d_len = struct.unpack("!IQII", header)
-            color = cv2.imdecode(np.frombuffer(recv_exact(sock, c_len), np.uint8),
-                                 cv2.IMREAD_COLOR)
-            depth = cv2.imdecode(np.frombuffer(recv_exact(sock, d_len), np.uint8),
-                                 cv2.IMREAD_UNCHANGED)
+            try:
+                header = recv_exact(sock, 4 + 8 + 4 + 4)
+                frame_id, ts_ms, c_len, d_len = struct.unpack("!IQII", header)
+                color = cv2.imdecode(np.frombuffer(recv_exact(sock, c_len), np.uint8),
+                                     cv2.IMREAD_COLOR)
+                depth = cv2.imdecode(np.frombuffer(recv_exact(sock, d_len), np.uint8),
+                                     cv2.IMREAD_UNCHANGED)
+            except (ConnectionResetError, OSError) as e:
+                if not args.reconnect:
+                    raise
+                print(f"\n[tcp] camera dropped ({e}); reconnecting...", flush=True)
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+                while True:
+                    try:
+                        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        sock.settimeout(5.0)
+                        sock.connect((args.robot_ip, args.port))
+                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                        _il = struct.unpack("!I", recv_exact(sock, 4))[0]
+                        recv_exact(sock, _il)  # re-read intrinsics (assume unchanged)
+                        sock.settimeout(None)
+                        print("[tcp] camera reconnected", flush=True)
+                        break
+                    except (ConnectionResetError, OSError, socket.timeout) as ce:
+                        print(f"[tcp] reconnect failed ({ce}); retry in 2s", flush=True)
+                        try:
+                            sock.close()
+                        except Exception:
+                            pass
+                        time.sleep(2.0)
+                continue
 
             t0 = time.time()
             results = model.track(color, classes=[0], conf=args.conf,

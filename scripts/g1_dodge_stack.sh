@@ -94,6 +94,12 @@ if [ -z "${START_RGBD+x}" ]; then
         START_RGBD=1
     fi
 fi
+# KEEP_VIDEOHUB=1 (default) -> do NOT pkill the Unitree video_hub_pc4 / master_service
+# before starting RGBD. CONFIRMED (exp #4 vs #5): killing it disturbs the Unitree loco
+# service and makes fsm=200 idle-drift run away (~1.9m); NOT killing it keeps drift
+# bounded. The RealSense still opens fine with video_hub alive, so the kill is
+# unnecessary. Set KEEP_VIDEOHUB=0 only if a real camera/device conflict ever appears.
+KEEP_VIDEOHUB="${KEEP_VIDEOHUB:-1}"
 START_LIDAR_DRIVER="${START_LIDAR_DRIVER:-1}"
 START_LIO="${START_LIO:-1}"
 START_ODOM_BRIDGE="${START_ODOM_BRIDGE:-1}"
@@ -279,8 +285,14 @@ start_sensors() {
     check_robot_network
 
     if [ "$START_RGBD" = "1" ]; then
-        echo "[stack] restarting robot RGBD publisher ..."
-        uv run --with paramiko python scripts/restart_rgbd_robot.py --host "$ROBOT_IP"
+        rgbd_args=(--host "$ROBOT_IP")
+        if [ "$KEEP_VIDEOHUB" = "1" ]; then
+            echo "[stack] restarting robot RGBD publisher (KEEP_VIDEOHUB=1: NOT killing video_hub) ..."
+            rgbd_args+=(--keep-videohub)
+        else
+            echo "[stack] restarting robot RGBD publisher ..."
+        fi
+        uv run --with paramiko python scripts/restart_rgbd_robot.py "${rgbd_args[@]}"
     else
         echo "[stack] skipping RGBD restart (START_RGBD=$START_RGBD)"
     fi
