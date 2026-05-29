@@ -1356,6 +1356,25 @@ def main():
     parser.add_argument("--yolo_kf_meas_std", type=float, default=0.10)
     parser.add_argument("--yolo_kf_meas_std_close", type=float, default=0.30)
     parser.add_argument("--yolo_kf_gate", type=float, default=4.0)
+    parser.add_argument("--commit_project", dest="commit_project",
+                        action="store_true", default=True,
+                        help="Input alignment: once a person is locked as approaching, "
+                             "drive the dodge policy with a SMOOTH constant-velocity "
+                             "projection (seeded from the clean approach) instead of the "
+                             "jumpy close-range YOLO — so real input looks like the fake. "
+                             "Releases if a fresh detection contradicts it or it times out.")
+    parser.add_argument("--no_commit_project", dest="commit_project",
+                        action="store_false",
+                        help="Disable commit-and-project; feed raw filtered YOLO to the dodge.")
+    parser.add_argument("--commit_dist", type=float, default=1.3,
+                        help="Lock the approaching person for projection when its filtered "
+                             "distance drops below this (m); set just outside --safety_dist.")
+    parser.add_argument("--commit_max_time", type=float, default=3.0,
+                        help="Max seconds to run the smooth projection before releasing.")
+    parser.add_argument("--commit_break_dist", type=float, default=0.6,
+                        help="Release the projection if a fresh YOLO detection is this far "
+                             "from the projected position (m) — guards against the person "
+                             "deviating from the projected straight-line path.")
     parser.add_argument("--lock_first_yolo_track", action="store_true", default=True,
                         help="Lock to the YOLO/ByteTrack track_id that starts the first "
                              "DODGE. Later track_id changes are ignored.")
@@ -1448,6 +1467,10 @@ def main():
         kf_meas_std=args.yolo_kf_meas_std,
         kf_meas_std_close=args.yolo_kf_meas_std_close,
         kf_gate_sigma=args.yolo_kf_gate,
+        commit_enable=args.commit_project,
+        commit_dist=args.commit_dist,
+        commit_max_time=args.commit_max_time,
+        commit_break_dist=args.commit_break_dist,
     )
 
     robot_pos = np.array([0.0, 0.0, 0.8], dtype=np.float32)

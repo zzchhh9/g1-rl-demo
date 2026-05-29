@@ -336,7 +336,13 @@ class YoloDdsObstacleDetector:
                  kf_meas_std_close: float = 0.30,
                  kf_gate_sigma: float = 4.0,
                  lock_first_track: bool = False,
-                 lock_track_id: int | None = None):
+                 lock_track_id: int | None = None,
+                 commit_enable: bool = True,
+                 commit_dist: float = 1.3,
+                 commit_min_speed: float = 0.10,
+                 commit_break_dist: float = 0.6,
+                 commit_max_time: float = 3.0,
+                 commit_min_accepts: int = 3):
         from unitree_sdk2py.idl.std_msgs.msg.dds_ import String_
         self._lock = threading.Lock()
         self._latest: dict | None = None
@@ -376,6 +382,22 @@ class YoloDdsObstacleDetector:
                                  else None)
         self._ignored_track_count = 0
 
+        # Commit-and-project (input alignment): once a person is locked as
+        # approaching, drive the policy with a SMOOTH constant-velocity projection
+        # through the dodge instead of the jumpy close-range YOLO. real YOLO only
+        # (a) triggers the lock and (b) seeds direction+speed from the smooth approach.
+        self._commit_enable = bool(commit_enable)
+        self._commit_dist = float(commit_dist)
+        self._commit_min_speed = float(commit_min_speed)
+        self._commit_break_dist = float(commit_break_dist)
+        self._commit_max_time = float(commit_max_time)
+        self._commit_min_accepts = int(commit_min_accepts)
+        self._commit_active = False
+        self._commit_p = None      # world xy at lock
+        self._commit_v = None      # world vxy at lock
+        self._commit_t0 = None
+        self._commit_z = -0.48
+
         self.subscriber = ChannelSubscriber(topic, String_)
         self.subscriber.Init(self._callback, 10)
         kf_str = (f"KF q_pos={kf_process_pos_std} q_vel={kf_process_vel_std} "
@@ -403,6 +425,7 @@ class YoloDdsObstacleDetector:
         self._kf_last_frame_id = -1
         self._kf_consec_rej = 0
         self._kf_last_accept_t = None
+        self._commit_active = False
 
     @property
     def debug_snapshot(self) -> dict:
@@ -448,6 +471,48 @@ class YoloDdsObstacleDetector:
                 ignored_track_id = track_id
                 self._ignored_track_count += 1
                 has_detection = False
+
+        # ── COMMIT-AND-PROJECT: while locked on an approaching person, output a
+        #    SMOOTH constant-velocity projection (p + v*t) so the dodge policy sees
+        #    a clean ramp like the fake signal — independent of YOLO jitter/dropouts.
+        #    Release if a fresh detection contradicts the projection or it times out.
+        if self._commit_active:
+            elapsed = now - self._commit_t0
+            proj = self._commit_p + self._commit_v * elapsed
+            proj_dist = float(np.linalg.norm(proj - robot_pos[:2]))
+            release = None
+            if elapsed > self._commit_max_time:
+                release = "timeout"
+            elif has_detection:
+                x_b = float(data["x_fwd"]); y_b = float(data["y_left"])
+                cy, sy = np.cos(robot_yaw), np.sin(robot_yaw)
+                mwx = robot_pos[0] + x_b * cy - y_b * sy
+                mwy = robot_pos[1] + x_b * sy + y_b * cy
+                if float(np.hypot(mwx - proj[0], mwy - proj[1])) > self._commit_break_dist:
+                    release = "deviation"
+            if release is None:
+                self._debug = {
+                    "status": "commit_project",
+                    "age": age,
+                    "frame_id": data.get("frame_id", -1) if data else -1,
+                    "raw_n": data.get("n", 0) if data else 0,
+                    "msg_count": msg_count,
+                    "track_id": track_id,
+                    "locked_track_id": self._locked_track_id,
+                    "commit_elapsed": elapsed,
+                    "commit_vxy": (float(self._commit_v[0]), float(self._commit_v[1])),
+                    "kf_dist": proj_dist,
+                    "accepted": self._kf_n_accepted,
+                    "rejected": self._kf_n_rejected,
+                    "held": self._kf_n_held,
+                    "nis": self._last_nis,
+                }
+                return np.array([proj[0], proj[1], self._commit_z], dtype=np.float32)
+            # released: drop the projection and fall through to normal processing
+            self._commit_active = False
+            self._reset_kf()
+            print(f"[YOLO-DDS] COMMIT release ({release}) after {elapsed:.2f}s")
+
         if not has_detection:
             # No fresh detection. Hold last KF state if recent enough.
             if (self._use_kalman and self._kf_x is not None
@@ -622,6 +687,27 @@ class YoloDdsObstacleDetector:
             "held": self._kf_n_held,
             "nis": self._last_nis,
         }
+
+        # ── COMMIT TRIGGER: lock an approaching person for smooth projection.
+        #    Seed direction+speed from the (smooth) approach KF state. We lock just
+        #    outside the dodge trigger so the projection covers the whole dodge.
+        if (self._commit_enable and not self._commit_active
+                and self._kf_x is not None
+                and self._kf_n_accepted >= self._commit_min_accepts):
+            kf_pos = np.asarray(self._kf_x[:2], dtype=np.float64)
+            kf_vel = np.asarray(self._kf_x[2:4], dtype=np.float64)
+            kf_dist = float(np.linalg.norm(kf_pos - robot_pos[:2]))
+            to_robot = robot_pos[:2] - kf_pos
+            d = float(np.linalg.norm(to_robot))
+            closing = float(kf_vel @ (to_robot / d)) if d > 1e-6 else 0.0
+            if kf_dist < self._commit_dist and closing > self._commit_min_speed:
+                self._commit_p = kf_pos.copy()
+                self._commit_v = kf_vel.copy()
+                self._commit_t0 = now
+                self._commit_z = z
+                self._commit_active = True
+                print(f"[YOLO-DDS] COMMIT lock @ dist={kf_dist:.2f}m "
+                      f"v=[{kf_vel[0]:+.2f},{kf_vel[1]:+.2f}] closing={closing:.2f}m/s")
         return np.array([self._kf_x[0], self._kf_x[1], z], dtype=np.float32)
 
     @property
