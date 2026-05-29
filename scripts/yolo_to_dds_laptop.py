@@ -126,11 +126,31 @@ def main():
 
     print(f"[tcp] connecting to {args.robot_ip}:{args.port} ...")
     startup_status["text"] = "connecting_rgbd"
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((args.robot_ip, args.port))
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-    info_len = struct.unpack("!I", recv_exact(sock, 4))[0]
-    info = json.loads(recv_exact(sock, info_len).decode())
+    # Retry the initial connect instead of crashing: the robot-side RGBD publisher may
+    # still be starting (it stops video_hub + may hardware-reset the RealSense, ~15-20s).
+    # The startup heartbeat keeps publishing ready=False meanwhile, so the deploy waits.
+    sock = None
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5.0)
+            sock.connect((args.robot_ip, args.port))
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            info_len = struct.unpack("!I", recv_exact(sock, 4))[0]
+            info = json.loads(recv_exact(sock, info_len).decode())
+            sock.settimeout(None)
+            break
+        except (ConnectionRefusedError, ConnectionResetError, OSError, socket.timeout) as e:
+            if not args.reconnect:
+                raise
+            print(f"[tcp] camera not ready ({e}); retry in 2s "
+                  "(robot RGBD still starting/resetting) ...", flush=True)
+            try:
+                if sock is not None:
+                    sock.close()
+            except Exception:
+                pass
+            time.sleep(2.0)
     fx, cx_px = info["fx"], info["cx"]
     print(f"[tcp] intrinsics: fx={fx:.1f} cx={cx_px:.1f}  source rate {info.get('rate_hz', '?')}Hz")
 

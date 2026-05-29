@@ -1078,6 +1078,29 @@ def main():
     parser.add_argument("--close_escape_speed", type=float, default=None,
                         help="Minimum radial away speed near the obstacle. Default uses the "
                              "largest feasible radial speed under max_vel.")
+    parser.add_argument("--dodge_dir_latch", dest="dodge_dir_latch",
+                        action="store_true", default=True,
+                        help="Latch the lateral escape side at the start of a dodge so a "
+                             "crossing obstacle cannot make the dodge wag left<->right "
+                             "(net displacement cancels and the online return-frame fit "
+                             "starves, which is what makes the recover walk the wrong way).")
+    parser.add_argument("--no_dodge_dir_latch", dest="dodge_dir_latch",
+                        action="store_false",
+                        help="Allow the dodge lateral command to switch sides mid-dodge.")
+    parser.add_argument("--dodge_latch_deadband", type=float, default=0.10,
+                        help="Lateral command magnitude (m/s) needed to commit the latched "
+                             "dodge side.")
+    parser.add_argument("--max_dodge_dist", type=float, default=2.0,
+                        help="Cap dodge displacement from the origin (m). At/above this the "
+                             "dodge holds position instead of running further away. "
+                             "<=0 disables the cap.")
+    parser.add_argument("--min_dodge_dist", type=float, default=0.5,
+                        help="Keep escaping in the latched direction until the dodge has "
+                             "moved at least this far from origin (m), so every dodge is big "
+                             "enough for a clean return-frame fit. <=0 disables.")
+    parser.add_argument("--min_dodge_time", type=float, default=2.5,
+                        help="Max seconds to spend reaching --min_dodge_dist before allowing "
+                             "the return regardless.")
     parser.add_argument("--return_enable", action="store_true", default=True,
                         help="After dodge clears, estimate displacement from sent SDK "
                              "velocity commands and walk back toward the start pose.")
@@ -1140,6 +1163,12 @@ def main():
     parser.add_argument("--return_bad_progress_abort_count", type=int, default=3,
                         help="Abort RETURN after this many fresh odom updates move "
                              "clearly away from the origin. Set <=0 to disable.")
+    parser.add_argument("--return_max_frame_flips", type=int, default=1,
+                        help="When the return is detected walking AWAY from origin, the "
+                             "online return frame is almost always fit ~180deg backwards "
+                             "(det=+1 but reversed). Instead of aborting, flip the frame "
+                             "180deg (negate disp_b) and retry up to this many times. "
+                             "Set 0 to disable (abort immediately, old behavior).")
     parser.add_argument("--return_odom_stale_abort", type=float, default=1.5,
                         help="Abort RETURN if external odom stays stale this long. "
                              "Set <=0 to keep waiting with zero velocity.")
@@ -1441,6 +1470,8 @@ def main():
     return_probe_dx_w = None
     return_odom_stale_since = None
     return_bad_progress_count = 0
+    return_flip_sign = 1.0
+    return_frame_flips = 0
     dodge_start_valid_count = 0
     last_dodge_gate_warn = 0.0
     return_prev_xy = None
@@ -1464,6 +1495,11 @@ def main():
     return_head_cmd = None
     return_guarded = False
     dodge_start_yaw = 0.0
+    dodge_start_t = 0.0
+    dodge_lat_sign = 0.0
+    dodge_commit_b = np.zeros(2, dtype=np.float32)
+    dodge_capped = False
+    last_commit_warn = 0.0
     clear_since = None
     odom_origin_xy = None
     odom_origin_yaw = None
@@ -1968,6 +2004,10 @@ def main():
                               f"yaw={0.0 if odom_origin_yaw is None else odom_origin_yaw:+.2f}")
                     dodge_start_yaw = (
                         current_return_yaw if current_return_yaw is not None else yaw)
+                    dodge_start_t = time.time()
+                    dodge_lat_sign = 0.0
+                    dodge_commit_b[:] = 0.0
+                    dodge_capped = False
                     dodge.reset(robot_pos[:2], yaw)
                     if args.lock_first_yolo_track and target_track_id is None:
                         try:
@@ -2027,8 +2067,50 @@ def main():
                 target[:], _ = _block_toward_obstacle(target, obs_b, max_toward=0.0)
                 target[:], safe_dbg = _enforce_away_component(
                     target, obs_b, args.close_escape_speed, args.max_vel)
+                # Latch the lateral escape side: once the dodge commits to a side, a
+                # crossing obstacle can't make the lateral command reverse (the wag
+                # that cancels displacement and ruins the online return-frame fit).
+                if args.dodge_dir_latch:
+                    _lat = float(target[1])
+                    if dodge_lat_sign == 0.0:
+                        if abs(_lat) >= args.dodge_latch_deadband:
+                            dodge_lat_sign = 1.0 if _lat > 0.0 else -1.0
+                    elif _lat * dodge_lat_sign < 0.0:
+                        target[1] = 0.0
+                # Remember the committed body-frame escape direction (for min-commit).
+                _tnorm = float(np.linalg.norm(target[:2]))
+                if _tnorm > 1e-3:
+                    dodge_commit_b[:] = np.asarray(target[:2], dtype=np.float32) / _tnorm
+                # Cap: never let the dodge run past --max_dodge_dist from the origin.
+                _disp_now = float(np.linalg.norm(robot_xy_est))
+                if args.max_dodge_dist > 0.0 and _disp_now >= args.max_dodge_dist:
+                    target[:] = 0.0
+                    if not dodge_capped:
+                        print(f"[DODGE CAP] est_disp={_disp_now:.2f}m >= "
+                              f"{args.max_dodge_dist:.2f}m; holding (no further escape)")
+                        dodge_capped = True
                 clear_since = None
                 return_prestop_sent = False
+            elif (active and args.min_dodge_dist > 0.0
+                  and float(np.linalg.norm(dodge_commit_b)) > 1e-3
+                  and float(np.linalg.norm(robot_xy_est)) < args.min_dodge_dist
+                  and (args.max_dodge_dist <= 0.0
+                       or float(np.linalg.norm(robot_xy_est)) < args.max_dodge_dist)
+                  and (time.time() - dodge_start_t) < args.min_dodge_time):
+                # Obstacle cleared but the dodge is still too small for a reliable
+                # return-frame fit: keep escaping in the latched direction until it
+                # has committed at least --min_dodge_dist before allowing the return.
+                target[0] = float(dodge_commit_b[0]) * float(args.close_escape_speed)
+                target[1] = float(dodge_commit_b[1]) * float(args.close_escape_speed)
+                target[2] = 0.0
+                clear_since = None
+                return_prestop_sent = False
+                _now_c = time.time()
+                if _now_c - last_commit_warn > 1.0:
+                    print(f"[DODGE COMMIT] est_disp="
+                          f"{float(np.linalg.norm(robot_xy_est)):.2f}m < "
+                          f"{args.min_dodge_dist:.2f}m; continuing latched escape")
+                    last_commit_warn = _now_c
             elif active:
                 now = time.time()
                 if clear_since is None:
@@ -2131,6 +2213,8 @@ def main():
                             return_last_progress_t = now
                             return_best_disp = disp_mag
                             return_bad_progress_count = 0
+                            return_flip_sign = 1.0
+                            return_frame_flips = 0
                             if args.return_mode == "geo":
                                 return_frame_rot = None
                                 return_frame_yaw_ref = None
@@ -2370,6 +2454,25 @@ def main():
                     if args.exit_on_return_abort:
                         print("[RETURN ABORT] exiting controller to StopMove")
                         break
+                elif (args.return_bad_progress_abort_count > 0
+                      and return_probe_phase is None
+                      and return_bad_progress_count
+                      >= args.return_bad_progress_abort_count
+                      and return_frame_flips < args.return_max_frame_flips):
+                    # Walking AWAY from origin: the online return frame is almost always
+                    # fit ~180deg backwards here (det=+1 but reversed). Flip it (negate
+                    # disp_b) and retry instead of aborting.
+                    return_flip_sign = -return_flip_sign
+                    return_frame_flips += 1
+                    return_bad_progress_count = 0
+                    return_last_progress_t = now
+                    return_best_disp = disp_mag
+                    return_prev_xy = robot_xy_est.copy()
+                    target[:] = 0.0
+                    print(f"[RETURN FLIP] moving away from origin "
+                          f"(actual_cos={0.0 if return_actual_prog_cos is None else return_actual_prog_cos:+.2f}); "
+                          f"flipped return frame 180deg and retrying "
+                          f"({return_frame_flips}/{args.return_max_frame_flips})")
                 elif (args.return_bad_progress_abort_count > 0
                       and return_probe_phase is None
                       and return_bad_progress_count
@@ -2674,6 +2777,10 @@ def main():
                                 frozen_rot=return_frame_rot,
                                 frozen_yaw_ref=return_frame_yaw_ref,
                             )
+                        # Auto-flip: if a 180deg-reversed frame was detected (below),
+                        # negate disp_b so the controller drives toward home instead of away.
+                        if return_flip_sign < 0.0:
+                            disp_b = -np.asarray(disp_b, dtype=np.float32)
                         return_disp_b = disp_b.copy()
                         if args.return_mode == "head" and return_head is not None:
                             yaw_ref = current_return_yaw if current_return_yaw is not None else yaw

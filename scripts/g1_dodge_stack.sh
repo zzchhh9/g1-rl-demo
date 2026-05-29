@@ -47,6 +47,10 @@ FAKE_YOLO_EXTRA=""
 [ "$FAKE_YOLO_LOOP" = "1" ] && FAKE_YOLO_EXTRA="$FAKE_YOLO_EXTRA --loop"
 FAKE_YOLO_MAX_PASSES="${FAKE_YOLO_MAX_PASSES:-5}"  # YOLO_SOURCE=sequence: number of triggers
 FAKE_YOLO_POST_GAP="${FAKE_YOLO_POST_GAP:-5.0}"    # seconds after each recover before next
+# YOLO_SOURCE=sequence crossing-heading range (deg). Default 0-360 = any direction.
+# Set 90..270 to make the "person" only approach from the robot's FRONT 180deg.
+FAKE_YOLO_HEADING_MIN="${FAKE_YOLO_HEADING_MIN:-0}"
+FAKE_YOLO_HEADING_MAX="${FAKE_YOLO_HEADING_MAX:-360}"
 MAX_VEL="${MAX_VEL:-0.30}"
 # Keep the real evasive trigger close to the robot. By default, one meter is
 # the boundary: dodge starts inside it, stops outside it after the return clear
@@ -381,6 +385,8 @@ python scripts/yolo_to_dds_laptop.py \
   --max-passes '$FAKE_YOLO_MAX_PASSES' \
   --start-delay '$FAKE_YOLO_START_DELAY' \
   --post-recover-gap '$FAKE_YOLO_POST_GAP' \
+  --heading-min '$FAKE_YOLO_HEADING_MIN' \
+  --heading-max '$FAKE_YOLO_HEADING_MAX' \
   --track-id '$FAKE_YOLO_TRACK_ID' \
   --print-every '$YOLO_PRINT_EVERY'; bash"
             ;;

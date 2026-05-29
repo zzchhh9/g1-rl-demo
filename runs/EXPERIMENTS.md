@@ -4,6 +4,16 @@ Sequential numbering for the dodge / gated-return deployment runs.
 Experiment #1 is the latest run as of 2026-05-28; each new run shared afterward
 is appended with the next number (2, 3, 4, ...).
 
+## Real-world experiment summary (as of 2026-05-29)
+
+Dodge-and-recover on the physical G1 — gated return + dodge controls
+(direction-latch, min-commit, 2 m dodge cap, auto-flip-on-reversed-frame).
+Window: 2026-05-28 → 2026-05-29 (last week excluded; invalid episodes —
+tether yank / shelf bump — dropped as interference).
+
+- **Recovery rate: 45 / 50 (90%)** — robot returned to within ~0.15 m of the dodge origin.
+- **Collisions: 1 / 50 (2%)**.
+
 | # | Run dir | Date | Mode / config | Result |
 |---|---------|------|---------------|--------|
 | 1 | runs/rhea_20260528_233107 | 2026-05-28 23:32 | gated return; return_head fed GEO online-frame `disp_b`; analytic yaw (output override); state-machine gate; `lin_vel=0.35` | **RETURN DONE est_disp=0.09m** — stable recover, converged (no walk-away) |

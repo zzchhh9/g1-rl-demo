@@ -23,40 +23,67 @@ import pyrealsense2 as rs
 
 
 LISTEN_PORT = 5005
-RATE_HZ = 10.0
-# 1280x720 needs USB 3.0; 640x480 fits USB 2.0 fine.
-# Override via env: RGBD_W=1280 RGBD_H=720 python3 rgbd_publisher.py
-import os as _os
-RGB_W = int(_os.environ.get("RGBD_W", "640"))
-RGB_H = int(_os.environ.get("RGBD_H", "480"))
+# Override via env. The dodge stack lowers these to keep the robot's CPU free for
+# the locomotion controller (capture+encode here and the loco service share PC4;
+# a heavy camera load jitters the balance loop and makes fsm=200 idle-drift):
+#   RGBD_W/RGBD_H  resolution (default 640x480)
+#   RGBD_FPS       cap on the RealSense capture fps (default 30)
+#   RGBD_RATE      encode+send rate in Hz (default 10)
+RGB_W = int(os.environ.get("RGBD_W", "640"))
+RGB_H = int(os.environ.get("RGBD_H", "480"))
+RATE_HZ = float(os.environ.get("RGBD_RATE", "10"))
+_FPS_CAP = int(os.environ.get("RGBD_FPS", "30"))
+_FPS_TRY = [f for f in (30, 15, 6) if f <= _FPS_CAP] or [6]
+
+# Try the requested resolution first, then fall back across resolutions AND fps. The
+# device can come up in a reduced mode (e.g. only 424x240/480x270 depth, no 640x480) after
+# another process (Unitree video_hub) grabbed and released it; both color and depth must use
+# a profile the device currently exposes.
+_RES_TRY = []
+for _wh in [(RGB_W, RGB_H), (640, 480), (424, 240)]:
+    if _wh not in _RES_TRY:
+        _RES_TRY.append(_wh)
+
+
+def _open_camera(pipe):
+    for (rw, rh) in _RES_TRY:
+        for fps in _FPS_TRY:
+            try:
+                cfg2 = rs.config()
+                cfg2.enable_stream(rs.stream.color, rw, rh, rs.format.bgr8, fps)
+                cfg2.enable_stream(rs.stream.depth, rw, rh, rs.format.z16, fps)
+                prof = pipe.start(cfg2)
+                al = rs.align(rs.stream.color)
+                for _ in range(10):          # warmup auto-exposure
+                    pipe.wait_for_frames(timeout_ms=5000)
+                print(f"[rs] using {rw}x{rh} fps={fps}", flush=True)
+                return prof, al
+            except RuntimeError as e:
+                print(f"[rs] {rw}x{rh} fps={fps} failed ({e}), trying next", flush=True)
+                try:
+                    pipe.stop()
+                except Exception:
+                    pass
+                time.sleep(0.5)
+    return None, None
+
 
 pipe = rs.pipeline()
-# 15fps to fit USB 2.0 bandwidth (USB 3.0 supports 30fps). Try 30 first, fall
-# back to 15 then 6 if either stream config or warmup frames fail.
-profile = None
-align = None
-for fps in (30, 15, 6):
-    try:
-        cfg2 = rs.config()
-        cfg2.enable_stream(rs.stream.color, RGB_W, RGB_H, rs.format.bgr8, fps)
-        cfg2.enable_stream(rs.stream.depth, RGB_W, RGB_H, rs.format.z16, fps)
-        profile = pipe.start(cfg2)
-        align = rs.align(rs.stream.color)
-        for _ in range(10):          # warmup auto-exposure
-            pipe.wait_for_frames(timeout_ms=5000)
-        print(f"[rs] using fps={fps}", flush=True)
-        break
-    except RuntimeError as e:
-        print(f"[rs] fps={fps} failed ({e}), trying lower", flush=True)
-        try:
-            pipe.stop()
-        except Exception:
-            pass
-        profile = None
-        align = None
-        time.sleep(1.0)
+profile, align = _open_camera(pipe)
 if profile is None or align is None:
-    raise SystemExit("[rs] no fps worked")
+    # Device stuck in a reduced/half-claimed mode -> hardware reset and retry once. This
+    # self-heals the "no 640x480 / Failed to resolve Z16" state seen after a reboot.
+    print("[rs] open failed; hardware_reset + retry", flush=True)
+    try:
+        for _d in rs.context().query_devices():
+            _d.hardware_reset()
+    except Exception as e:
+        print(f"[rs] hardware_reset failed: {e}", flush=True)
+    time.sleep(12.0)
+    pipe = rs.pipeline()
+    profile, align = _open_camera(pipe)
+if profile is None or align is None:
+    raise SystemExit("[rs] no resolution/fps worked (even after hardware reset)")
 
 intr = profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
 depth_scale = profile.get_device().first_depth_sensor().get_depth_scale()

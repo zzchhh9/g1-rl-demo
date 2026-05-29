@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import shlex
 import sys
 
 import paramiko
@@ -39,6 +40,15 @@ def main():
     parser.add_argument("--remote-launch", default="/tmp/launch_rgbd.sh")
     parser.add_argument("--keep-videohub", action="store_true",
                         help="Do not kill Unitree video_hub_pc4 before starting RGBD.")
+    parser.add_argument("--rgbd-w", type=int, default=640)
+    parser.add_argument("--rgbd-h", type=int, default=480)
+    parser.add_argument("--rgbd-fps", type=int, default=30,
+                        help="Cap RealSense capture fps (lower = less robot CPU).")
+    parser.add_argument("--rgbd-rate", type=float, default=10.0,
+                        help="Encode+send rate Hz (lower = less robot CPU).")
+    parser.add_argument("--nice", type=int, default=0,
+                        help="nice level for the publisher (higher = lower priority, "
+                             "keeps CPU for the locomotion controller).")
     args = parser.parse_args()
 
     local_script = pathlib.Path(args.local_script).resolve()
@@ -62,9 +72,14 @@ def main():
              "pkill -f '/tmp/launch_rgbd.sh' || true; "
              "sleep 1")
     if not args.keep_videohub:
+        # video_hub_pc4 holds the RealSense; rgbd_publisher can't open the depth stream
+        # until it is stopped. It is a root service supervised by master_service, so a
+        # plain `pkill` fails (EPERM) and it respawns. Stop it the supported way via mscli
+        # (sets enable=0, no respawn); fall back to a sudo pkill just in case.
+        pw = shlex.quote(args.password)
         run(ssh, "set +e; "
-                 "pkill -f 'video_hub_pc4' || true; "
-                 "pkill -f 'master_service__video_hub_pc4' || true; "
+                 f"echo {pw} | sudo -S /unitree/sbin/mscli stopservice video_hub_pc4 2>&1 || true; "
+                 f"echo {pw} | sudo -S pkill -9 -f videohub_pc4 2>/dev/null || true; "
                  "sleep 2")
 
     print(f"[rgbd] upload {local_script} -> {args.remote_script}")
@@ -75,7 +90,11 @@ def main():
 set -e
 export LD_LIBRARY_PATH=/opt/ros/noetic/lib/aarch64-linux-gnu:$LD_LIBRARY_PATH
 export PYTHONUNBUFFERED=1
-nohup python3 {args.remote_script} > /tmp/rgbd_publisher.log 2>&1 &
+export RGBD_W={args.rgbd_w}
+export RGBD_H={args.rgbd_h}
+export RGBD_FPS={args.rgbd_fps}
+export RGBD_RATE={args.rgbd_rate}
+nohup nice -n {args.nice} python3 {args.remote_script} > /tmp/rgbd_publisher.log 2>&1 &
 echo $! > /tmp/rgbd_publisher.pid
 sleep 3
 cat /tmp/rgbd_publisher.pid

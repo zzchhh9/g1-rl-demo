@@ -14,3 +14,10 @@ third_party/isaacgym/
 
 # other
 .DS_Store
+
+# Deployment run artifacts (large, regenerated each run).
+# runs/EXPERIMENTS.md stays tracked; only the per-run data is ignored.
+runs/rhea_*/*.log
+runs/rhea_*/*.jsonl
+runs/rhea_*/*.json
+runs/rhea_*/*.mp4
