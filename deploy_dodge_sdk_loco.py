@@ -1101,6 +1101,18 @@ def main():
     parser.add_argument("--min_dodge_time", type=float, default=2.5,
                         help="Max seconds to spend reaching --min_dodge_dist before allowing "
                              "the return regardless.")
+    parser.add_argument("--dodge_rear_bias", dest="dodge_rear_bias",
+                        action="store_true", default=False,
+                        help="Force the dodge direction into the REAR sector (straight-back / "
+                             "diagonal-back), clamped to +/- --dodge_rear_angle around "
+                             "straight-back. Makes the recover a pure FORWARD walk -- the most "
+                             "accurate direction for the G1 and robust to lateral "
+                             "return-frame degeneracy.")
+    parser.add_argument("--no_dodge_rear_bias", dest="dodge_rear_bias",
+                        action="store_false")
+    parser.add_argument("--dodge_rear_angle", type=float, default=40.0,
+                        help="Half-angle (deg) of the rear sector the dodge is clamped to: "
+                             "direction held within [180-angle, 180+angle]. 0 = straight back.")
     parser.add_argument("--return_enable", action="store_true", default=True,
                         help="After dodge clears, estimate displacement from sent SDK "
                              "velocity commands and walk back toward the start pose.")
@@ -2090,6 +2102,19 @@ def main():
                 target[:], _ = _block_toward_obstacle(target, obs_b, max_toward=0.0)
                 target[:], safe_dbg = _enforce_away_component(
                     target, obs_b, args.close_escape_speed, args.max_vel)
+                # Force the dodge into the REAR sector (straight-back / diagonal-back):
+                # clamp its direction to within +/- dodge_rear_angle of straight-back, keeping
+                # the speed. This makes the recover a pure FORWARD walk -- the most accurate
+                # direction for the G1, and robust to lateral return-frame degeneracy.
+                if args.dodge_rear_bias:
+                    _spd = float(np.linalg.norm(target[:2]))
+                    if _spd > 1e-3:
+                        _th = float(np.arctan2(float(target[1]), float(target[0])))
+                        _dev = (_th % (2.0 * np.pi)) - np.pi   # deviation from straight-back (pi)
+                        _A = float(np.radians(args.dodge_rear_angle))
+                        _dev = float(np.clip(_dev, -_A, _A))
+                        target[0] = -_spd * float(np.cos(_dev))
+                        target[1] = -_spd * float(np.sin(_dev))
                 # Latch the lateral escape side: once the dodge commits to a side, a
                 # crossing obstacle can't make the lateral command reverse (the wag
                 # that cancels displacement and ruins the online return-frame fit).
