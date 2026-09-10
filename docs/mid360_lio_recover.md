@@ -1,5 +1,13 @@
 # MID-360 Odometry For SDK Dodge Recover
 
+Operator front door: [`README.md`](../README.md)（SLAM / mapping 一节）。
+Runbook: [`g1_sdk_loco_dodge_runbook.md`](g1_sdk_loco_dodge_runbook.md).
+
+The dodge stack default is now `SLAM_BACKEND=fast_lio` publishing
+`/Odometry`. This note still describes the LIO-SAM topic
+`/lio_sam_ros2/mapping/odometry` and the same DDS bridge (`rt/dodge/odom`).
+Standalone mapping uses `./start_lidar_mapping.sh` (LIO-SAM + PCD).
+
 Goal: keep Unitree's built-in SDK locomotion for walking, and use MID-360
 LiDAR-inertial odometry for return-to-start after dodge.
 

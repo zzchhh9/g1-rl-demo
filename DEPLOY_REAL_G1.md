@@ -1,5 +1,11 @@
 # G1 真机部署指南：Dodge+Return 策略
 
+> **当前推荐路径已换成 SDK 高层 locomotion dodge**（蓝灯模式 + `LocoClient.SetVelocity` + Mid-360 LIO 回位）。
+> 先看仓库根目录 [README.md](README.md) 和 [docs/g1_sdk_loco_dodge_runbook.md](docs/g1_sdk_loco_dodge_runbook.md)。
+> 本文保留低层 `motion.pt`、sim2sim、以及 `start_lidar.sh` 裸 UDP 测距，**不是**现在的默认操作手册。
+
+---
+
 ## Checkpoint 清单
 
 clone 之后所有文件已经在仓库里，不需要单独下载：

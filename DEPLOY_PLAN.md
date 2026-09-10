@@ -1,5 +1,8 @@
 # G1 真机部署计划
 
+> **状态**：这是 2026-05 的执行计划，主路径后来换成了 SDK 高层 loco dodge。
+> 现在怎么跑：仓库 [README.md](README.md)、[docs/g1_sdk_loco_dodge_runbook.md](docs/g1_sdk_loco_dodge_runbook.md)。
+>
 > 这是 **执行级别的计划文档**（不是教程）。基于：
 > - 已实现：LiDAR UDP forwarder 链路、RealSense+YOLO 链路、sim2sim 验证、`deploy_dodge_real.py` 4 层安全网。
 > - 现状：机器人被防摔架吊起，dodge policy 已用真实 YOLO 数据在 sim 中通过两个完整 DODGE→RETURN 周期。

@@ -119,6 +119,7 @@ AUTO_START_SENSORS_BEFORE_DEPLOY="${AUTO_START_SENSORS_BEFORE_DEPLOY:-1}"
 PREDEPLOY_TIMEOUT="${PREDEPLOY_TIMEOUT:-15}"
 ODOM_PREDEPLOY_MIN_COUNT="${ODOM_PREDEPLOY_MIN_COUNT:-5}"
 ODOM_PREDEPLOY_STABLE_S="${ODOM_PREDEPLOY_STABLE_S:-1.0}"
+WAIT_ODOM_BEFORE_DEPLOY="${WAIT_ODOM_BEFORE_DEPLOY:-1}"
 WAIT_YOLO_BEFORE_DEPLOY="${WAIT_YOLO_BEFORE_DEPLOY:-1}"
 YOLO_STALENESS="${YOLO_STALENESS:-0.8}"
 YOLO_PREDEPLOY_MIN_COUNT="${YOLO_PREDEPLOY_MIN_COUNT:-3}"
@@ -441,13 +442,17 @@ run_deploy() {
     if [ "$AUTO_START_SENSORS_BEFORE_DEPLOY" = "1" ]; then
         echo "[deploy] pre-starting SLAM/map + YOLO stack before controller"
         start_sensors
-        echo "[deploy] waiting for fresh SLAM odometry on $DDS_ODOM_TOPIC"
-        uv run python scripts/dds_wait_json.py "$NET" \
-          --topic "$DDS_ODOM_TOPIC" \
-          --stale "$ODOM_STALENESS" \
-          --timeout "$PREDEPLOY_TIMEOUT" \
-          --min-count "$ODOM_PREDEPLOY_MIN_COUNT" \
-          --stable-seconds "$ODOM_PREDEPLOY_STABLE_S"
+        if [ "$WAIT_ODOM_BEFORE_DEPLOY" = "1" ]; then
+          echo "[deploy] waiting for fresh SLAM odometry on $DDS_ODOM_TOPIC"
+          uv run python scripts/dds_wait_json.py "$NET" \
+            --topic "$DDS_ODOM_TOPIC" \
+            --stale "$ODOM_STALENESS" \
+            --timeout "$PREDEPLOY_TIMEOUT" \
+            --min-count "$ODOM_PREDEPLOY_MIN_COUNT" \
+            --stable-seconds "$ODOM_PREDEPLOY_STABLE_S"
+        else
+          echo "[deploy] skipping odom wait (WAIT_ODOM_BEFORE_DEPLOY=0; cmd-integration mode, no SLAM)"
+        fi
         if [ "$WAIT_YOLO_BEFORE_DEPLOY" = "1" ]; then
             echo "[deploy] waiting for YOLO heartbeat on $DDS_YOLO_TOPIC"
             uv run python scripts/dds_wait_json.py "$NET" \

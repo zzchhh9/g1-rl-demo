@@ -10,6 +10,10 @@
 #   --return_max_vel 0.25->0.40  --return_timeout 15->30s  --return_no_progress 3->6s
 # (return 有 P 减速+min_vel, 近原点仍慢下来收敛, 不影响最终精度.)
 #
+# 又: dodge 后 coast(惯性后退)太大(settle speed 0.4+m/s 降不下来) -> "did not
+# settle", 或 settle 后 return 时机器人还在后退 -> "moving away" abort. 降 dodge
+# 速度减小 coast:  MAX_VEL 0.30 -> 0.20
+#
 # fake YOLO 是一次性的(发完一轮就停), 所以每个 run 都【重起 fake YOLO】发一次.
 #   - 之前的 bug: 复用 sensors 时连 fake YOLO 也跳过了重启 -> 只有第 1 个 run 有
 #     假人能 dodge, 后续 run 全程 track=-1 不 dodge.
@@ -43,6 +47,7 @@ else
 fi
 
 exec env AUTO_START_SENSORS_BEFORE_DEPLOY="$AUTO" FAKE_YOLO_START_DELAY=8 \
+  MAX_VEL=0.20 \
   ./deploy_fake.sh \
   --balance_mode 0 --no_require_loco_ready \
   --return_mode geo --return_done_dist 0.06 \

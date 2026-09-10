@@ -1,9 +1,18 @@
 # G1 SDK Locomotion Dodge Runbook
 
+Operator front door (遥操 / SLAM / quickstart): [`README.md`](../README.md).
+Docs index: [`docs/README.md`](README.md).
+
 This is the current recommended real-robot path. It bypasses the
 `motion.pt` low-level locomotion policy and sends velocity commands to the
 Unitree built-in high-level locomotion controller through
 `LocoClient.SetVelocity()`.
+
+`scripts/g1_dodge_stack.sh` currently defaults to `SLAM_BACKEND=fast_lio`
+(`ROS_ODOM_TOPIC=/Odometry`). LIO-SAM remains available with
+`SLAM_BACKEND=lio_sam` (`/lio_sam_ros2/mapping/odometry`) and is what
+`./start_lidar_mapping.sh` uses. Both backends still bridge to DDS
+`rt/dodge/odom`.
 
 ## Current Known-Good Flow
 
